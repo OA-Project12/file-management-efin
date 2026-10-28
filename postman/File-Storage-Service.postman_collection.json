@@ -1,0 +1,235 @@
+{
+  "info": {
+    "_postman_id": "bf4f3cf3-dbc3-4edc-8fa2-2bfebbfcc106",
+    "name": "File Storage Service API",
+    "description": "Complete Postman collection for the implemented File Storage API. Set baseUrl and apiKey. Department roles are enforced per API key. Upload binaries directly to Supabase using the signed URL returned by the upload-intent request.",
+    "schema": "https://schema.getpostman.com/json/collection/v2.1.0/collection.json"
+  },
+  "auth": {
+    "type": "bearer",
+    "bearer": [
+      {
+        "key": "token",
+        "value": "{{apiKey}}",
+        "type": "string"
+      }
+    ]
+  },
+  "variable": [
+    { "key": "baseUrl", "value": "http://localhost:3000", "type": "string" },
+    { "key": "apiKey", "value": "", "type": "string", "description": "API key. Use a files:read/files:write key for file requests or a keys:manage key for key management." },
+    { "key": "ownerSubject", "value": "postman-test-user", "type": "string" },
+    { "key": "departmentId", "value": "", "type": "string", "description": "Set from GET /api/v1/departments." },
+    { "key": "parentFolderId", "value": "null", "type": "string", "description": "Use null for department root; set a folder UUID to create a nested folder." },
+    { "key": "folderId", "value": "", "type": "string", "description": "Folder UUID for search or metadata update; leave blank for root." },
+    { "key": "folderName", "value": "Contracts", "type": "string" },
+    { "key": "displayName", "value": "Sample PDF", "type": "string" },
+    { "key": "tag", "value": "contract", "type": "string" },
+    { "key": "fileName", "value": "sample.pdf", "type": "string" },
+    { "key": "contentType", "value": "application/pdf", "type": "string" },
+    { "key": "sizeBytes", "value": "12345", "type": "string", "description": "Exact file size in bytes. Must match the binary selected in Upload file to Storage." },
+    { "key": "fileId", "value": "", "type": "string", "description": "Set automatically by Create upload intent." },
+    { "key": "signedUrl", "value": "", "type": "string", "description": "Set automatically by Create upload intent. Treat as a secret." },
+    { "key": "keyId", "value": "", "type": "string", "description": "Set manually to the API key UUID to revoke." },
+    { "key": "newKeyId", "value": "", "type": "string", "description": "Set automatically by Create API key." },
+    { "key": "nextCursor", "value": "", "type": "string", "description": "Set automatically by Search files." }
+  ],
+  "item": [
+    {
+      "name": "Health and identity",
+      "item": [
+        {
+          "name": "Liveness",
+          "request": { "method": "GET", "header": [], "url": "{{baseUrl}}/api/health/live", "description": "No authentication required." }
+        },
+        {
+          "name": "Readiness (database)",
+          "request": { "method": "GET", "header": [], "url": "{{baseUrl}}/api/health/ready", "description": "No authentication required." }
+        },
+        {
+          "name": "Who am I (validate API key)",
+          "request": { "method": "GET", "header": [], "url": "{{baseUrl}}/api/v1/me", "description": "Requires a valid API key." }
+        }
+      ]
+    },
+    {
+      "name": "API key management (requires keys:manage)",
+      "item": [
+        {
+          "name": "List API keys",
+          "request": { "method": "GET", "header": [], "url": "{{baseUrl}}/api/v1/keys", "description": "Returns key metadata only. Secret values are never returned." }
+        },
+        {
+          "name": "Create API key",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "if (pm.response.code === 201) {",
+                  "  const body = pm.response.json();",
+                  "  if (body.data?.id) pm.collectionVariables.set('newKeyId', body.data.id);",
+                  "  if (body.data?.apiKey) console.log('Copy the one-time API key from the response and store it securely.');",
+                  "}"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "POST",
+            "header": [{ "key": "Content-Type", "value": "application/json" }],
+            "body": { "mode": "raw", "raw": "{\n  \"expiresInDays\": 90,\n  \"scopes\": [\"files:read\", \"files:write\"],\n  \"departmentGrants\": [\n    { \"departmentId\": \"{{departmentId}}\", \"role\": \"editor\" }\n  ]\n}", "options": { "raw": { "language": "json" } } },
+            "url": "{{baseUrl}}/api/v1/keys",
+            "description": "Creates a key with file scopes only. The apiKey secret appears once in the response; do not log or share it."
+          }
+        },
+        {
+          "name": "Revoke API key",
+          "request": { "method": "DELETE", "header": [], "url": "{{baseUrl}}/api/v1/keys/{{keyId}}", "description": "Set keyId to the UUID of a different key. A key cannot revoke itself." }
+        }
+      ]
+    },
+    {
+      "name": "Department workspaces",
+      "item": [
+        {
+          "name": "List accessible departments",
+          "request": { "method": "GET", "header": [], "url": "{{baseUrl}}/api/v1/departments", "description": "Requires files:read or keys:manage. Lists only departments available to this key; a departments:manage application administrator sees all departments." }
+        },
+        {
+          "name": "Create department (application admin)",
+          "request": {
+            "method": "POST",
+            "header": [{ "key": "Content-Type", "value": "application/json" }],
+            "body": { "mode": "raw", "raw": "{\n  \"name\": \"Finance\"\n}", "options": { "raw": { "language": "json" } } },
+            "url": "{{baseUrl}}/api/v1/departments",
+            "description": "Requires the application-wide departments:manage scope. The creating management key receives admin access to the new department. This scope is not delegated through POST /api/v1/keys."
+          }
+        },
+        {
+          "name": "Create folder",
+          "request": {
+            "method": "POST",
+            "header": [{ "key": "Content-Type", "value": "application/json" }],
+            "body": { "mode": "raw", "raw": "{\n  \"name\": \"{{folderName}}\",\n  \"departmentId\": \"{{departmentId}}\",\n  \"parentFolderId\": {{parentFolderId}}\n}", "options": { "raw": { "language": "json" } } },
+            "url": "{{baseUrl}}/api/v1/folders",
+            "description": "Requires files:write and Editor/Admin role in departmentId. For a root folder, parentFolderId must be JSON null (not an empty string). Set the variable to null or edit the body."
+          }
+        },
+        {
+          "name": "List department folders",
+          "request": { "method": "GET", "header": [], "url": "{{baseUrl}}/api/v1/folders?departmentId={{departmentId}}&parentFolderId={{parentFolderId}}", "description": "Requires files:read and Viewer+ role for departmentId. Leave parentFolderId blank to list root folders; set it to a UUID to list child folders." }
+        }
+      ]
+    },
+    {
+      "name": "File operations (files:read / files:write)",
+      "item": [
+        {
+          "name": "Create upload intent",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "if (pm.response.code === 201) {",
+                  "  const body = pm.response.json();",
+                  "  if (body.data?.fileId) pm.collectionVariables.set('fileId', body.data.fileId);",
+                  "  if (body.data?.signedUrl) pm.collectionVariables.set('signedUrl', body.data.signedUrl);",
+                  "}"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "POST",
+            "header": [{ "key": "Content-Type", "value": "application/json" }],
+            "body": { "mode": "raw", "raw": "{\n  \"ownerSubject\": \"{{ownerSubject}}\",\n  \"departmentId\": \"{{departmentId}}\",\n  \"originalName\": \"{{fileName}}\",\n  \"contentType\": \"{{contentType}}\",\n  \"sizeBytes\": {{sizeBytes}}\n}", "options": { "raw": { "language": "json" } } },
+            "url": "{{baseUrl}}/api/v1/files/upload-intents",
+            "description": "Requires files:write. sizeBytes must be the exact size of the file selected in the next request. Saves fileId and signedUrl as collection variables."
+          }
+        },
+        {
+          "name": "Upload file to Supabase Storage (choose binary)",
+          "request": {
+            "method": "PUT",
+            "auth": { "type": "noauth" },
+            "header": [{ "key": "Content-Type", "value": "{{contentType}}" }],
+            "url": "{{signedUrl}}",
+            "description": "Select Body > binary and choose the file. This request goes directly to Supabase Storage, not to baseUrl. The signed URL is a secret and expires after 2 hours."
+          }
+        },
+        {
+          "name": "Complete upload",
+          "request": { "method": "POST", "header": [], "url": "{{baseUrl}}/api/v1/files/{{fileId}}/complete", "description": "Requires files:write. No request body. Verifies the stored object and marks it available." }
+        },
+        {
+          "name": "Search files",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "if (pm.response.code === 200) {",
+                  "  const body = pm.response.json();",
+                  "  pm.collectionVariables.set('nextCursor', body.data?.nextCursor ?? '');",
+                  "}"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "POST",
+            "header": [{ "key": "Content-Type", "value": "application/json" }],
+            "body": { "mode": "raw", "raw": "{\n  \"ownerSubject\": \"{{ownerSubject}}\",\n  \"departmentId\": \"{{departmentId}}\",\n  \"folderId\": \"{{folderId}}\",\n  \"tag\": \"{{tag}}\",\n  \"limit\": 25,\n  \"cursor\": null\n}", "options": { "raw": { "language": "json" } } },
+            "url": "{{baseUrl}}/api/v1/files/search",
+            "description": "Requires files:read. Use nextCursor from the response as cursor in the next page request."
+          }
+        },
+        {
+          "name": "Update file metadata / move department or folder",
+          "request": {
+            "method": "PATCH",
+            "header": [{ "key": "Content-Type", "value": "application/json" }],
+            "body": { "mode": "raw", "raw": "{\n  \"ownerSubject\": \"{{ownerSubject}}\",\n  \"displayName\": \"{{displayName}}\",\n  \"tags\": [\"{{tag}}\"]\n}", "options": { "raw": { "language": "json" } } },
+            "url": "{{baseUrl}}/api/v1/files/{{fileId}}/metadata",
+            "description": "Requires files:write and Editor/Admin access to the file's current department. This example changes displayName and tags. Send only fields to change. To move to a folder, add folderId with its UUID (or null for the department root). To move departments, add departmentId with the target UUID; the key also needs Editor/Admin access there."
+          }
+        },
+        {
+          "name": "Create download URL",
+          "request": {
+            "method": "POST",
+            "header": [{ "key": "Content-Type", "value": "application/json" }],
+            "body": { "mode": "raw", "raw": "{\n  \"ownerSubject\": \"{{ownerSubject}}\"\n}", "options": { "raw": { "language": "json" } } },
+            "url": "{{baseUrl}}/api/v1/files/{{fileId}}/download-url",
+            "description": "Requires files:read. The returned signed URL expires after 5 minutes and should be treated as a secret."
+          }
+        },
+        {
+          "name": "Create preview URL",
+          "request": {
+            "method": "POST",
+            "header": [{ "key": "Content-Type", "value": "application/json" }],
+            "body": { "mode": "raw", "raw": "{\n  \"ownerSubject\": \"{{ownerSubject}}\"\n}", "options": { "raw": { "language": "json" } } },
+            "url": "{{baseUrl}}/api/v1/files/{{fileId}}/preview-url",
+            "description": "Requires files:read. Supports PDF, JPEG, PNG, GIF, WebP, and plain text. Open the returned signedUrl in a browser/iframe; it expires after 5 minutes."
+          }
+        },
+        {
+          "name": "Request file deletion",
+          "request": {
+            "method": "POST",
+            "header": [{ "key": "Content-Type", "value": "application/json" }],
+            "body": { "mode": "raw", "raw": "{\n  \"ownerSubject\": \"{{ownerSubject}}\"\n}", "options": { "raw": { "language": "json" } } },
+            "url": "{{baseUrl}}/api/v1/files/{{fileId}}/delete",
+            "description": "Requires files:write. A 202 response means deletion is queued; the outbox worker must be running to remove the object and finish the state change."
+          }
+        }
+      ]
+    }
+  ]
+}
