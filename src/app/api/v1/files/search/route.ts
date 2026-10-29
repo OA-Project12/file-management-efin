@@ -21,11 +21,13 @@ interface ListFilesRequest {
   createdTo?: unknown;
 }
 
-function parseUtcDate(value: unknown): string | null | undefined {
+function parseBangkokDate(value: unknown): string | null | undefined {
   if (value === undefined || value === null || value === "") return undefined;
   if (typeof value !== "string" || !/^\d{4}-\d{2}-\d{2}$/.test(value)) return null;
-  const date = new Date(`${value}T00:00:00.000Z`);
-  return Number.isNaN(date.getTime()) || date.toISOString().slice(0, 10) !== value ? null : date.toISOString();
+  const date = new Date(`${value}T00:00:00.000+07:00`);
+  if (Number.isNaN(date.getTime())) return null;
+  const bangkokDate = new Date(date.getTime() + 7 * 60 * 60 * 1000).toISOString().slice(0, 10);
+  return bangkokDate !== value ? null : date.toISOString();
 }
 
 function errorResponse(code: string, message: string, status: number): Response {
@@ -138,10 +140,10 @@ export async function POST(request: Request): Promise<Response> {
     if (contentType !== undefined && (typeof contentType !== "string" || contentType.length > 255 || !/^[\w!#$&^_.+-]+\/[\w!#$&^_.+-]+$/.test(contentType))) {
       return errorResponse("invalid_content_type", "contentType must be a valid MIME type.", 400);
     }
-    const createdFrom = parseUtcDate(body.createdFrom);
-    const createdTo = parseUtcDate(body.createdTo);
+    const createdFrom = parseBangkokDate(body.createdFrom);
+    const createdTo = parseBangkokDate(body.createdTo);
     if (createdFrom === null || createdTo === null || (createdFrom && createdTo && createdFrom > createdTo)) {
-      return errorResponse("invalid_date_range", "createdFrom and createdTo must be valid YYYY-MM-DD dates, with createdFrom on or before createdTo.", 400);
+      return errorResponse("invalid_date_range", "createdFrom and createdTo must be valid YYYY-MM-DD dates in Asia/Bangkok, with createdFrom on or before createdTo.", 400);
     }
     const createdBefore = createdTo ? new Date(Date.parse(createdTo) + 86_400_000).toISOString() : undefined;
 
