@@ -26,8 +26,8 @@
     { "key": "displayName", "value": "Sample PDF", "type": "string" },
     { "key": "tag", "value": "contract", "type": "string" },
     { "key": "searchContentType", "value": "application/pdf", "type": "string", "description": "Optional exact MIME type filter; use an empty value to omit." },
-    { "key": "createdFrom", "value": "", "type": "string", "description": "Optional YYYY-MM-DD UTC start date." },
-    { "key": "createdTo", "value": "", "type": "string", "description": "Optional YYYY-MM-DD UTC end date, inclusive." },
+    { "key": "createdFrom", "value": "", "type": "string", "description": "Optional YYYY-MM-DD Asia/Bangkok start date." },
+    { "key": "createdTo", "value": "", "type": "string", "description": "Optional YYYY-MM-DD Asia/Bangkok end date, inclusive." },
     { "key": "fileName", "value": "sample.pdf", "type": "string" },
     { "key": "contentType", "value": "application/pdf", "type": "string" },
     { "key": "sizeBytes", "value": "12345", "type": "string", "description": "Exact file size in bytes. Must match the binary selected in Upload file to Storage." },
@@ -189,7 +189,7 @@
             "header": [{ "key": "Content-Type", "value": "application/json" }],
             "body": { "mode": "raw", "raw": "{\n  \"ownerSubject\": \"{{ownerSubject}}\",\n  \"departmentId\": \"{{departmentId}}\",\n  \"folderId\": \"{{folderId}}\",\n  \"tag\": \"{{tag}}\",\n  \"contentType\": \"{{searchContentType}}\",\n  \"createdFrom\": \"{{createdFrom}}\",\n  \"createdTo\": \"{{createdTo}}\",\n  \"limit\": 25,\n  \"cursor\": null\n}", "options": { "raw": { "language": "json" } } },
             "url": "{{baseUrl}}/api/v1/files/search",
-            "description": "Requires files:read. contentType matches an exact MIME type. createdFrom/createdTo are optional YYYY-MM-DD UTC dates, with createdTo inclusive. Use nextCursor from the response as cursor in the next page request."
+            "description": "Requires files:read. contentType matches an exact MIME type. createdFrom/createdTo are optional YYYY-MM-DD Asia/Bangkok dates, with createdTo inclusive. Use nextCursor from the response as cursor in the next page request."
           }
         },
         {
@@ -229,7 +229,21 @@
             "header": [{ "key": "Content-Type", "value": "application/json" }],
             "body": { "mode": "raw", "raw": "{\n  \"ownerSubject\": \"{{ownerSubject}}\"\n}", "options": { "raw": { "language": "json" } } },
             "url": "{{baseUrl}}/api/v1/files/{{fileId}}/delete",
-            "description": "Requires files:write. A 202 response means deletion is queued; the outbox worker must be running to remove the object and finish the state change."
+            "description": "Requires files:write and Editor/Admin role. Returns 200 and moves the file to trash; the Storage object is retained for restore."
+          }
+        },
+        {
+          "name": "List trash",
+          "request": { "method": "GET", "header": [], "url": "{{baseUrl}}/api/v1/files/trash?ownerSubject={{ownerSubject}}&departmentId={{departmentId}}", "description": "Requires files:read. Lists up to 100 trashed files in the selected department." }
+        },
+        {
+          "name": "Restore file from trash",
+          "request": {
+            "method": "POST",
+            "header": [{ "key": "Content-Type", "value": "application/json" }],
+            "body": { "mode": "raw", "raw": "{\n  \"ownerSubject\": \"{{ownerSubject}}\"\n}", "options": { "raw": { "language": "json" } } },
+            "url": "{{baseUrl}}/api/v1/files/{{fileId}}/restore",
+            "description": "Requires files:write and Editor/Admin role in the file's department. Returns 200 when the file is available again."
           }
         }
       ]

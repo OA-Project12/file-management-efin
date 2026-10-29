@@ -23,6 +23,7 @@ export interface FileListItem {
   department: string | null;
   tags: string[];
   createdAt: Date;
+  trashedAt?: Date;
 }
 
 export interface FileSearchFilters {
@@ -35,8 +36,7 @@ export interface FileSearchFilters {
 }
 
 export type FileDeletionRequestResult =
-  | "queued"
-  | "already_deleting"
+  | "trashed"
   | "already_deleted"
   | "not_found"
   | "not_deletable";
@@ -50,4 +50,6 @@ export interface FileRepository {
     filters?: FileSearchFilters,
   ): Promise<FileListItem[]>;
   requestDelete(fileId: string, scope: FileScope): Promise<FileDeletionRequestResult>;
+  listTrash(scope: FileScope, departmentId?: string): Promise<FileListItem[]>;
+  restore(fileId: string, scope: FileScope): Promise<"restored" | "not_found">;
 }

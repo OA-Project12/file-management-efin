@@ -35,6 +35,8 @@ API key เป็น secret สำหรับ server-to-server ห้ามใ�
 - `401`: key ไม่มี/ไม่ถูกต้อง/หมดอายุ/revoked หรือ application ไม่ active
 - `403`: ไม่มี scope หรือบทบาทที่จำเป็น
 - `503`: บริการหรือฐานข้อมูลที่ต้องพึ่งพาไม่พร้อม
+- ค่าเวลา `timestamptz` ใน API ส่งเป็น ISO 8601 UTC (`Z`) เพื่อให้ client แปลงได้ถูกต้อง; หน้าเว็บแสดงเวลาเป็น `Asia/Bangkok` (UTC+07:00)
+- PostgreSQL role `filesvc_runtime` และ `filesvc_worker` ตั้ง session timezone เป็น `Asia/Bangkok`; การตั้งค่าใหม่มีผลเมื่อเชื่อมต่อฐานข้อมูลใหม่ หากใช้ SQL Editor ด้วย role `postgres` ให้รัน `SET TIME ZONE 'Asia/Bangkok';` ใน session นั้นเพื่อดูค่า `timestamptz` เป็นเวลาไทย
 
 ## Health checks (ไม่ต้องใช้ key)
 
@@ -207,7 +209,7 @@ Content-Type: <CONTENT_TYPE>
 }
 ```
 
-`ownerSubject` required 1–255 ตัวอักษร; `departmentId`, `folderId`, `tag`, `contentType`, `createdFrom`, `createdTo` optional; `contentType` กรอง MIME type แบบตรงค่าโดยไม่สนตัวพิมพ์เล็ก/ใหญ่; วันที่ต้องเป็น `YYYY-MM-DD` ตาม UTC โดยรวมวัน `createdTo` ทั้งวัน; ส่งวันเดียวได้ และ `createdFrom` ต้องไม่เกิน `createdTo`; ไม่ระบุ department จะค้นในทุก department ที่ key เข้าถึงได้; `limit` 1–100 (default 25); `cursor` ใช้ค่าจาก response ก่อนหน้า
+`ownerSubject` required 1–255 ตัวอักษร; `departmentId`, `folderId`, `tag`, `contentType`, `createdFrom`, `createdTo` optional; `contentType` กรอง MIME type แบบตรงค่าโดยไม่สนตัวพิมพ์เล็ก/ใหญ่; วันที่ต้องเป็น `YYYY-MM-DD` ตาม `Asia/Bangkok` โดยรวมวัน `createdTo` ทั้งวัน (00:00 ถึงก่อน 00:00 ของวันถัดไป); ส่งวันเดียวได้ และ `createdFrom` ต้องไม่เกิน `createdTo`; ไม่ระบุ department จะค้นในทุก department ที่ key เข้าถึงได้; `limit` 1–100 (default 25); `cursor` ใช้ค่าจาก response ก่อนหน้า
 
 คืน `200` พร้อม `data.items[]` (id, fileName, contentType, sizeBytes, status, createdAt และข้อมูล metadata ที่มี) และ `nextCursor` ซึ่งเป็น `null` เมื่อไม่มีหน้าถัดไป
 
@@ -249,7 +251,17 @@ Content-Type: <CONTENT_TYPE>
 { "ownerSubject": "user-123" }
 ```
 
-`202` หมายถึงเข้าคิวลบแล้ว คืน `data.status: "deleting"`; outbox worker จะลบ object และเปลี่ยนสถานะภายหลัง หากลบแล้วคืน `200` พร้อม `status: "deleted"` และ `deletionRequested: false` การลบนี้ยังไม่มี trash/restore
+คืน `200` พร้อม `data.status: "deleted"` และ `data.trashed: true`; ไฟล์จะถูกซ่อนจากการค้นหาปกติ แต่ object ยังคงอยู่ใน Storage เพื่อให้กู้คืนได้
+
+### `GET /api/v1/files/trash?ownerSubject=<OWNER>&departmentId=<UUID>`
+
+ดูไฟล์ในถังขยะ ต้องมี `files:read` และสิทธิ์ Viewer ขึ้นไป; `ownerSubject` เป็น required query parameter และ `departmentId` เป็น optional หากไม่ส่งจะดูทุกหน่วยงานที่ key เข้าถึงได้ คืน `data.items[]` สูงสุด 100 รายการ เรียงจากวันที่ลบล่าสุด โดยมี `trashedAt` ในแต่ละรายการ
+
+### `POST /api/v1/files/{fileId}/restore`
+
+กู้คืนไฟล์จากถังขยะ ต้องมี `files:write` และ Editor/Admin ในหน่วยงานไฟล์ ส่ง body `{ "ownerSubject": "user-123" }`; สำเร็จคืน `200` พร้อม `data.status: "available"`; หากไฟล์ไม่อยู่ในถังขยะหรือไม่มีสิทธิ์คืน `404 file_not_found`
+
+ไฟล์ที่ถูกลบถาวรก่อนเพิ่มฟีเจอร์ถังขยะไม่สามารถกู้คืนผ่าน endpoint นี้ได้ ไฟล์ที่เข้าถังขยะใหม่ยังไม่มีการลบถาวรอัตโนมัติ
 
 ## Error codes ที่พบบ่อย
 
@@ -280,5 +292,5 @@ API verifies object and marks it available
 - Supabase Storage bucket `private-files` เป็น private; ขนาดสูงสุด default 25 MiB ต่อไฟล์
 - ยังไม่ได้กำหนด MIME allowlist (`allowed_mime_types = null`) หรือ antivirus scanning
 - API key department roles ยังไม่ใช่ SSO/identity รายบุคคล; `ownerSubject` มาจาก request caller
-- ยังไม่มี batch upload endpoint, versioning/restore, file sharing, trash/restore, audit trail หรือ quota รวมต่อหน่วยงาน
-- Delete ทำงานแบบ asynchronous และต้องมี outbox worker ทำงาน
+- ยังไม่มี batch upload endpoint, versioning/restore, file sharing, audit trail หรือ quota รวมต่อหน่วยงาน
+- ถังขยะรองรับ 100 รายการล่าสุดต่อ request; ยังไม่มี pagination หรือการลบถาวร

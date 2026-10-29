@@ -83,10 +83,9 @@ export async function POST(
     if (result === "not_found") return errorResponse("file_not_found", "File was not found.", 404);
     if (result === "not_deletable") return errorResponse("file_not_deletable", "File is not in a deletable state.", 409);
 
-    const status = result === "already_deleted" ? "deleted" : "deleting";
     return Response.json(
-      { data: { fileId, status, deletionRequested: result !== "already_deleted" } },
-      { status: result === "already_deleted" ? 200 : 202, headers: { "Cache-Control": "no-store" } },
+      { data: { fileId, status: "deleted", trashed: true } },
+      { status: 200, headers: { "Cache-Control": "no-store" } },
     );
   } catch (error) {
     const serviceError = error as { code?: string; message?: string };
