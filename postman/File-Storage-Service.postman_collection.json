@@ -155,6 +155,16 @@
           }
         },
         {
+          "name": "Create batch upload intents",
+          "request": {
+            "method": "POST",
+            "header": [{ "key": "Content-Type", "value": "application/json" }],
+            "body": { "mode": "raw", "raw": "{\n  \"ownerSubject\": \"{{ownerSubject}}\",\n  \"departmentId\": \"{{departmentId}}\",\n  \"files\": [\n    { \"originalName\": \"sample.pdf\", \"contentType\": \"application/pdf\", \"sizeBytes\": 53693 },\n    { \"originalName\": \"report.pdf\", \"contentType\": \"application/pdf\", \"sizeBytes\": 12345 }\n  ]\n}", "options": { "raw": { "language": "json" } } },
+            "url": "{{baseUrl}}/api/v1/files/upload-intents/batch",
+            "description": "Creates 1–20 intents. Response data.items follows input order and includes index and per-file ready/error status. For each ready item, PUT that file's exact bytes to its signedUrl, then call Complete upload with its fileId. Adjust sizeBytes to match each file."
+          }
+        },
+        {
           "name": "Upload file to Supabase Storage (choose binary)",
           "request": {
             "method": "PUT",

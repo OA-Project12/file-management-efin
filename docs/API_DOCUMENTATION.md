@@ -174,6 +174,25 @@ Request:
 
 คืน `201` พร้อม `data.fileId`, `bucketId`, `objectKey`, `signedUrl`, `uploadToken`, `expiresAt`; upload grant มีอายุ 2 ชั่วโมง
 
+### `POST /api/v1/files/upload-intents/batch`
+
+ขอ upload intents หลายไฟล์ในคำขอเดียว ต้องมี `files:write` และ Editor/Admin ในหน่วยงานปลายทาง; `ownerSubject` และ `departmentId` ใช้ร่วมกันทุกไฟล์
+
+```json
+{
+  "ownerSubject": "user-123",
+  "departmentId": "<DEPARTMENT_UUID>",
+  "files": [
+    { "originalName": "one.pdf", "contentType": "application/pdf", "sizeBytes": 53693 },
+    { "originalName": "two.pdf", "contentType": "application/pdf", "sizeBytes": 12345 }
+  ]
+}
+```
+
+ส่งได้ 1–20 ไฟล์ต่อคำขอ และใช้ข้อกำหนดชื่อ, MIME type, ขนาด และ `checksumSha256` (optional) เหมือน endpoint รายไฟล์; request JSON จำกัด 64 KiB ระบบคืน `200` พร้อม `data.items[]` ตามลำดับ input โดยแต่ละรายการมี `index`, `status: "ready"` และข้อมูล upload grant หรือ `status: "error"` พร้อม `error.code`/`error.message`; มี `readyCount` และ `errorCount` รวมด้วย หากไฟล์หนึ่งไม่ผ่าน validation หรือสร้าง intent ไม่สำเร็จ ไฟล์อื่นยังดำเนินการต่อ
+
+สำหรับรายการ `ready` ให้ PUT ไฟล์ตาม `index` ไปยัง `signedUrl` ของรายการนั้น แล้วเรียก `POST /api/v1/files/{fileId}/complete` แยกแต่ละไฟล์ หน้าเว็บแบ่งคำขอเป็นชุดละ 20 และอัปโหลดพร้อมกันสูงสุด 3 ไฟล์ พร้อมแสดงผลรายไฟล์
+
 ### Upload bytes to Supabase Storage
 
 ส่ง PUT ไปยัง `signedUrl` ที่ได้ ไม่ใช่ API server; ใน Postman ให้เลือก Body → **binary**:
@@ -292,5 +311,5 @@ API verifies object and marks it available
 - Supabase Storage bucket `private-files` เป็น private; ขนาดสูงสุด default 25 MiB ต่อไฟล์
 - ยังไม่ได้กำหนด MIME allowlist (`allowed_mime_types = null`) หรือ antivirus scanning
 - API key department roles ยังไม่ใช่ SSO/identity รายบุคคล; `ownerSubject` มาจาก request caller
-- ยังไม่มี batch upload endpoint, versioning/restore, file sharing, audit trail หรือ quota รวมต่อหน่วยงาน
+- ยังไม่มี versioning/restore, file sharing, audit trail หรือ quota รวมต่อหน่วยงาน
 - ถังขยะรองรับ 100 รายการล่าสุดต่อ request; ยังไม่มี pagination หรือการลบถาวร
