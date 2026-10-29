@@ -2,55 +2,58 @@ import "server-only";
 import { Pool } from "pg";
 import type { FileRecord } from "@/domain/files/file-record";
 import type {
-  FileListItem,
-  FileDeletionRequestResult,
-  FilePagePosition,
-  FileSearchFilters,
-  FileRepository,
-  FileScope,
+    FileListItem,
+    FileDeletionRequestResult,
+    FilePagePosition,
+    FileSearchFilters,
+    FileRepository,
+    FileScope,
+    TrashPagePosition,
+    TrashedObject,
 } from "@/application/files/ports/file-repository";
 import { getDatabasePool } from "@/infrastructure/database/pool";
 
 interface FileRow {
-  id: string;
-  tenant_id: string;
-  application_id: string;
-  owner_subject: string;
-  bucket_id: string;
-  object_key: string;
-  original_name: string;
-  content_type: string;
-  size_bytes: string;
-  status: FileRecord["status"];
-  created_at: Date;
+    id: string;
+    tenant_id: string;
+    application_id: string;
+    owner_subject: string;
+    bucket_id: string;
+    object_key: string;
+    original_name: string;
+    content_type: string;
+    size_bytes: string;
+    status: FileRecord["status"];
+    created_at: Date;
 }
 
 interface FileListRow {
-  id: string;
-  original_name: string;
-  display_name: string;
-  content_type: string;
-  size_bytes: string;
-  folder_id: string | null;
-  department_id: string;
-  department: string;
-  tags: string[];
-  created_at: Date;
-  trashed_at?: Date;
+    id: string;
+    original_name: string;
+    display_name: string;
+    content_type: string;
+    size_bytes: string;
+    folder_id: string | null;
+    department_id: string;
+    department: string;
+    tags: string[];
+    created_at: Date;
+    trashed_at?: Date;
+    trashed_at_cursor?: string;
 }
 
 interface DeletableFileRow {
-  id: string;
-  status: FileRecord["status"];
-  trashed_at: Date | null;
+    id: string;
+    status: FileRecord["status"];
+    trashed_at: Date | null;
 }
 
 export class PostgresFileRepository implements FileRepository {
-  constructor(private readonly pool: Pool = getDatabasePool()) {}
+    constructor(private readonly pool: Pool = getDatabasePool()) {}
 
-  async findAvailableById(fileId: string, scope: FileScope): Promise<FileRecord | null> {
-    const result = await this.pool.query<FileRow>(
-      `select id, tenant_id, application_id, owner_subject, bucket_id,
+    async findAvailableById(fileId: string, scope: FileScope): Promise<FileRecord | null> {
+        const result = await this.pool.query<FileRow>(
+            `select id, tenant_id, application_id, owner_subject, bucket_id,
               object_key, original_name, content_type, size_bytes, status, created_at
        from filesvc.files
        where id = $1
@@ -59,35 +62,35 @@ export class PostgresFileRepository implements FileRepository {
          and owner_subject = $4
          and department_id = any($5::uuid[])
          and status = 'available'`,
-      [fileId, scope.tenantId, scope.applicationId, scope.ownerSubject, scope.departmentIds],
-    );
+            [fileId, scope.tenantId, scope.applicationId, scope.ownerSubject, scope.departmentIds],
+        );
 
-    const row = result.rows[0];
-    if (!row) return null;
+        const row = result.rows[0];
+        if (!row) return null;
 
-    return {
-      id: row.id,
-      tenantId: row.tenant_id,
-      applicationId: row.application_id,
-      ownerSubject: row.owner_subject,
-      bucketId: row.bucket_id,
-      objectKey: row.object_key,
-      originalName: row.original_name,
-      contentType: row.content_type,
-      sizeBytes: row.size_bytes,
-      status: row.status,
-      createdAt: row.created_at,
-    };
-  }
+        return {
+            id: row.id,
+            tenantId: row.tenant_id,
+            applicationId: row.application_id,
+            ownerSubject: row.owner_subject,
+            bucketId: row.bucket_id,
+            objectKey: row.object_key,
+            originalName: row.original_name,
+            contentType: row.content_type,
+            sizeBytes: row.size_bytes,
+            status: row.status,
+            createdAt: row.created_at,
+        };
+    }
 
-  async listAvailable(
-    scope: FileScope,
-    limit: number,
-    before?: FilePagePosition,
-    filters: FileSearchFilters = {},
-  ): Promise<FileListItem[]> {
-    const result = await this.pool.query<FileListRow>(
-      `
+    async listAvailable(
+        scope: FileScope,
+        limit: number,
+        before?: FilePagePosition,
+        filters: FileSearchFilters = {},
+    ): Promise<FileListItem[]> {
+        const result = await this.pool.query<FileListRow>(
+            `
         select f.id, f.original_name, f.display_name, f.content_type, f.size_bytes,
                f.folder_id, f.department_id, d.name as department, f.tags, f.created_at
         from filesvc.files f
@@ -109,40 +112,40 @@ export class PostgresFileRepository implements FileRepository {
         order by f.created_at desc, f.id desc
         limit $6
       `,
-      [
-        scope.tenantId,
-        scope.applicationId,
-        scope.ownerSubject,
-        before?.createdAt.toISOString() ?? null,
-        before?.fileId ?? null,
-        limit,
-        filters.folderId ?? null,
-        filters.departmentId ?? null,
-        filters.tag ?? null,
-        scope.departmentIds,
-        filters.contentType ?? null,
-        filters.createdFrom ?? null,
-        filters.createdBefore ?? null,
-      ],
-    );
+            [
+                scope.tenantId,
+                scope.applicationId,
+                scope.ownerSubject,
+                before?.createdAt.toISOString() ?? null,
+                before?.fileId ?? null,
+                limit,
+                filters.folderId ?? null,
+                filters.departmentId ?? null,
+                filters.tag ?? null,
+                scope.departmentIds,
+                filters.contentType ?? null,
+                filters.createdFrom ?? null,
+                filters.createdBefore ?? null,
+            ],
+        );
 
-    return result.rows.map((row) => ({
-      id: row.id,
-      originalName: row.original_name,
-      displayName: row.display_name,
-      contentType: row.content_type,
-      sizeBytes: row.size_bytes,
-      folderId: row.folder_id,
-      departmentId: row.department_id,
-      department: row.department,
-      tags: row.tags,
-      createdAt: row.created_at,
-    }));
-  }
+        return result.rows.map((row) => ({
+            id: row.id,
+            originalName: row.original_name,
+            displayName: row.display_name,
+            contentType: row.content_type,
+            sizeBytes: row.size_bytes,
+            folderId: row.folder_id,
+            departmentId: row.department_id,
+            department: row.department,
+            tags: row.tags,
+            createdAt: row.created_at,
+        }));
+    }
 
-  async requestDelete(fileId: string, scope: FileScope): Promise<FileDeletionRequestResult> {
-    const result = await this.pool.query<DeletableFileRow>(
-        `
+    async requestDelete(fileId: string, scope: FileScope): Promise<FileDeletionRequestResult> {
+        const result = await this.pool.query<DeletableFileRow>(
+            `
           select id, status, trashed_at
           from filesvc.files
           where id = $1
@@ -151,52 +154,125 @@ export class PostgresFileRepository implements FileRepository {
             and owner_subject = $4
             and department_id = any($5::uuid[])
         `,
-        [fileId, scope.tenantId, scope.applicationId, scope.ownerSubject, scope.departmentIds],
-    );
+            [fileId, scope.tenantId, scope.applicationId, scope.ownerSubject, scope.departmentIds],
+        );
 
-    const file = result.rows[0];
-    if (!file) return "not_found";
-    if (file.status === "deleted") return file.trashed_at ? "already_deleted" : "not_deletable";
-    if (file.status !== "available") return "not_deletable";
+        const file = result.rows[0];
+        if (!file) return "not_found";
+        if (file.status === "deleted") return file.trashed_at ? "already_deleted" : "not_deletable";
+        if (file.status !== "available") return "not_deletable";
 
-    const updated = await this.pool.query(
-      `update filesvc.files set status = 'deleted', deleted_at = now(), trashed_at = now(), updated_at = now()
+        const updated = await this.pool.query(
+            `update filesvc.files set status = 'deleted', deleted_at = now(), trashed_at = now(), updated_at = now()
        where id = $1 and tenant_id = $2 and application_id = $3 and owner_subject = $4
          and department_id = any($5::uuid[]) and status = 'available'
        returning id`,
-      [fileId, scope.tenantId, scope.applicationId, scope.ownerSubject, scope.departmentIds],
-    );
-    return updated.rowCount ? "trashed" : "not_deletable";
-  }
+            [fileId, scope.tenantId, scope.applicationId, scope.ownerSubject, scope.departmentIds],
+        );
+        return updated.rowCount ? "trashed" : "not_deletable";
+    }
 
-  async listTrash(scope: FileScope, departmentId?: string): Promise<FileListItem[]> {
-    const result = await this.pool.query<FileListRow>(
-      `select f.id, f.original_name, f.display_name, f.content_type, f.size_bytes,
-              f.folder_id, f.department_id, d.name as department, f.tags, f.created_at, f.trashed_at
+    async listTrash(scope: FileScope, limit: number, before?: TrashPagePosition, departmentId?: string): Promise<FileListItem[]> {
+        const result = await this.pool.query<FileListRow>(
+            `select f.id, f.original_name, f.display_name, f.content_type, f.size_bytes,
+              f.folder_id, f.department_id, d.name as department, f.tags, f.created_at, f.trashed_at,
+              to_char(f.trashed_at at time zone 'UTC', 'YYYY-MM-DD"T"HH24:MI:SS.US"Z"') as trashed_at_cursor
        from filesvc.files f
        join filesvc.departments d on d.id = f.department_id and d.tenant_id = f.tenant_id and d.application_id = f.application_id
        where f.tenant_id = $1 and f.application_id = $2 and f.owner_subject = $3
          and f.department_id = any($4::uuid[]) and f.status = 'deleted' and f.trashed_at is not null
          and ($5::uuid is null or f.department_id = $5)
-       order by f.trashed_at desc, f.id desc limit 100`,
-      [scope.tenantId, scope.applicationId, scope.ownerSubject, scope.departmentIds, departmentId ?? null],
-    );
-    return result.rows.map((row) => ({
-      id: row.id, originalName: row.original_name, displayName: row.display_name,
-      contentType: row.content_type, sizeBytes: row.size_bytes, folderId: row.folder_id,
-      departmentId: row.department_id, department: row.department, tags: row.tags,
-      createdAt: row.created_at, trashedAt: row.trashed_at,
-    }));
-  }
+         and ($6::timestamptz is null or (f.trashed_at, f.id) < ($6::timestamptz, $7::uuid))
+       order by f.trashed_at desc, f.id desc limit $8`,
+            [
+                scope.tenantId,
+                scope.applicationId,
+                scope.ownerSubject,
+                scope.departmentIds,
+                departmentId ?? null,
+                before?.trashedAt ?? null,
+                before?.fileId ?? null,
+                limit,
+            ],
+        );
+        return result.rows.map((row) => ({
+            id: row.id,
+            originalName: row.original_name,
+            displayName: row.display_name,
+            contentType: row.content_type,
+            sizeBytes: row.size_bytes,
+            folderId: row.folder_id,
+            departmentId: row.department_id,
+            department: row.department,
+            tags: row.tags,
+            createdAt: row.created_at,
+            trashedAt: row.trashed_at,
+            trashedAtCursor: row.trashed_at_cursor,
+        }));
+    }
 
-  async restore(fileId: string, scope: FileScope): Promise<"restored" | "not_found"> {
-    const result = await this.pool.query(
-      `update filesvc.files set status = 'available', deleted_at = null, trashed_at = null, updated_at = now()
+    async findTrashedObject(fileId: string, scope: FileScope): Promise<TrashedObject | null> {
+        const result = await this.pool.query<{ bucket_id: string; object_key: string }>(
+            `select bucket_id, object_key from filesvc.files
+       where id = $1 and tenant_id = $2 and application_id = $3 and owner_subject = $4
+         and department_id = any($5::uuid[]) and status = 'deleted' and trashed_at is not null`,
+            [fileId, scope.tenantId, scope.applicationId, scope.ownerSubject, scope.departmentIds],
+        );
+        const row = result.rows[0];
+        return row ? { bucketId: row.bucket_id, objectKey: row.object_key } : null;
+    }
+
+    async restore(fileId: string, scope: FileScope): Promise<"restored" | "not_found"> {
+        const result = await this.pool.query(
+            `update filesvc.files set status = 'available', deleted_at = null, trashed_at = null, updated_at = now()
        where id = $1 and tenant_id = $2 and application_id = $3 and owner_subject = $4
          and department_id = any($5::uuid[]) and status = 'deleted' and trashed_at is not null
        returning id`,
-      [fileId, scope.tenantId, scope.applicationId, scope.ownerSubject, scope.departmentIds],
-    );
-    return result.rowCount ? "restored" : "not_found";
-  }
+            [fileId, scope.tenantId, scope.applicationId, scope.ownerSubject, scope.departmentIds],
+        );
+        return result.rowCount ? "restored" : "not_found";
+    }
+
+    async requestPurge(fileId: string, scope: FileScope): Promise<"queued" | "not_found"> {
+        const client = await this.pool.connect();
+        try {
+            await client.query("begin");
+            const result = await client.query<{ bucket_id: string; object_key: string }>(
+                `select bucket_id, object_key from filesvc.files
+         where id = $1 and tenant_id = $2 and application_id = $3 and owner_subject = $4
+           and department_id = any($5::uuid[]) and status = 'deleted' and trashed_at is not null
+         for update`,
+                [fileId, scope.tenantId, scope.applicationId, scope.ownerSubject, scope.departmentIds],
+            );
+            const row = result.rows[0];
+            if (!row) {
+                await client.query("rollback");
+                return "not_found";
+            }
+            await client.query(`update filesvc.files set status = 'deleting', trashed_at = null, updated_at = now() where id = $1`, [
+                fileId,
+            ]);
+            await client.query(
+                `insert into filesvc.outbox (event_type, aggregate_id, payload)
+         values ('file.object_delete_requested', $1, $2::jsonb)`,
+                [
+                    fileId,
+                    JSON.stringify({
+                        fileId,
+                        tenantId: scope.tenantId,
+                        applicationId: scope.applicationId,
+                        bucketId: row.bucket_id,
+                        objectKey: row.object_key,
+                    }),
+                ],
+            );
+            await client.query("commit");
+            return "queued";
+        } catch (error) {
+            await client.query("rollback").catch(() => undefined);
+            throw error;
+        } finally {
+            client.release();
+        }
+    }
 }

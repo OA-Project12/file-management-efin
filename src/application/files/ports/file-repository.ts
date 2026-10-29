@@ -12,6 +12,16 @@ export interface FilePagePosition {
   fileId: string;
 }
 
+export interface TrashPagePosition {
+  trashedAt: string;
+  fileId: string;
+}
+
+export interface TrashedObject {
+  bucketId: string;
+  objectKey: string;
+}
+
 export interface FileListItem {
   id: string;
   originalName: string;
@@ -24,6 +34,7 @@ export interface FileListItem {
   tags: string[];
   createdAt: Date;
   trashedAt?: Date;
+  trashedAtCursor?: string;
 }
 
 export interface FileSearchFilters {
@@ -50,6 +61,8 @@ export interface FileRepository {
     filters?: FileSearchFilters,
   ): Promise<FileListItem[]>;
   requestDelete(fileId: string, scope: FileScope): Promise<FileDeletionRequestResult>;
-  listTrash(scope: FileScope, departmentId?: string): Promise<FileListItem[]>;
+  listTrash(scope: FileScope, limit: number, before?: TrashPagePosition, departmentId?: string): Promise<FileListItem[]>;
+  findTrashedObject(fileId: string, scope: FileScope): Promise<TrashedObject | null>;
   restore(fileId: string, scope: FileScope): Promise<"restored" | "not_found">;
+  requestPurge(fileId: string, scope: FileScope): Promise<"queued" | "not_found">;
 }

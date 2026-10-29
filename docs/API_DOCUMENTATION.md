@@ -22,7 +22,7 @@ API key เป็น secret สำหรับ server-to-server ห้ามใ�
 | Scope | สิทธิ์หลัก |
 |---|---|
 | `files:read` | ตรวจตัวตน, ดูหน่วยงาน/โฟลเดอร์ที่เข้าถึงได้, ค้นหา, ขอ preview/download URL |
-| `files:write` | สร้างโฟลเดอร์, ขอ upload intent, complete upload, แก้ metadata, ขอ delete |
+| `files:write` | สร้างโฟลเดอร์, ขอ upload intent, complete upload, แก้ metadata, ย้ายเข้าถังขยะ, กู้คืน, ขอ purge (Admin เท่านั้น) |
 | `keys:manage` | ดู, สร้าง และเพิกถอน API keys ในขอบเขตหน่วยงานที่ key เป็น Admin |
 | `departments:manage` | ผู้ดูแลระดับ application: เห็นทุกหน่วยงานและสร้างหน่วยงาน; ออกให้จาก trusted setup เท่านั้น ไม่สามารถส่งต่อผ่าน API |
 
@@ -272,21 +272,25 @@ Content-Type: <CONTENT_TYPE>
 
 คืน `200` พร้อม `data.status: "deleted"` และ `data.trashed: true`; ไฟล์จะถูกซ่อนจากการค้นหาปกติ แต่ object ยังคงอยู่ใน Storage เพื่อให้กู้คืนได้
 
-### `GET /api/v1/files/trash?ownerSubject=<OWNER>&departmentId=<UUID>`
+### `GET /api/v1/files/trash?ownerSubject=<OWNER>&departmentId=<UUID>&limit=25&cursor=<CURSOR>`
 
-ดูไฟล์ในถังขยะ ต้องมี `files:read` และสิทธิ์ Viewer ขึ้นไป; `ownerSubject` เป็น required query parameter และ `departmentId` เป็น optional หากไม่ส่งจะดูทุกหน่วยงานที่ key เข้าถึงได้ คืน `data.items[]` สูงสุด 100 รายการ เรียงจากวันที่ลบล่าสุด โดยมี `trashedAt` ในแต่ละรายการ
+ดูไฟล์ในถังขยะ ต้องมี `files:read` และสิทธิ์ Viewer ขึ้นไป; `ownerSubject` เป็น required query parameter ส่วน `departmentId`, `limit` และ `cursor` เป็น optional หากไม่ส่ง department จะดูทุกหน่วยงานที่ key เข้าถึงได้ `limit` default 25 สูงสุด 100 รายการ เรียงจากวันที่ลบล่าสุด โดยมี `trashedAt` ในแต่ละรายการ คืน `data.nextCursor` สำหรับหน้าถัดไป หรือ `null` เมื่อหมดรายการ ให้ส่ง cursor พร้อมตัวกรองเดิมเพื่อโหลดหน้าถัดไป
 
 ### `POST /api/v1/files/{fileId}/restore`
 
-กู้คืนไฟล์จากถังขยะ ต้องมี `files:write` และ Editor/Admin ในหน่วยงานไฟล์ ส่ง body `{ "ownerSubject": "user-123" }`; สำเร็จคืน `200` พร้อม `data.status: "available"`; หากไฟล์ไม่อยู่ในถังขยะหรือไม่มีสิทธิ์คืน `404 file_not_found`
+กู้คืนไฟล์จากถังขยะ ต้องมี `files:write` และ Editor/Admin ในหน่วยงานไฟล์ ส่ง body `{ "ownerSubject": "user-123" }`; API ตรวจว่า object ยังมีใน Supabase Storage ก่อนเปลี่ยนสถานะ สำเร็จคืน `200` พร้อม `data.status: "available"`; หากไฟล์ไม่อยู่ในถังขยะหรือไม่มีสิทธิ์คืน `404 file_not_found`; หาก object หายคืน `409 object_not_found`
 
-ไฟล์ที่ถูกลบถาวรก่อนเพิ่มฟีเจอร์ถังขยะไม่สามารถกู้คืนผ่าน endpoint นี้ได้ ไฟล์ที่เข้าถังขยะใหม่ยังไม่มีการลบถาวรอัตโนมัติ
+### `POST /api/v1/files/{fileId}/purge`
+
+ลบถาวรจากถังขยะ ต้องมี `files:write` และบทบาท Admin ในหน่วยงานไฟล์ ส่ง body `{ "ownerSubject": "user-123" }`; สำเร็จคืน `202` พร้อม `data.status: "deleting"` และ `data.purgeRequested: true` จากนั้น outbox worker จะลบ object ใน Storage และปิด event หาก worker ยังไม่รัน คำขอจะรออยู่ใน outbox ระหว่างนี้ไฟล์จะไม่แสดงในถังขยะและกู้คืนไม่ได้ หากไฟล์ไม่อยู่ในถังขยะหรือไม่มีสิทธิ์ Admin คืน `404 file_not_found`
+
+ไฟล์ที่ถูกลบถาวรก่อนเพิ่มฟีเจอร์ถังขยะไม่สามารถกู้คืนผ่าน endpoint นี้ได้ ไม่มีการลบถาวรอัตโนมัติ ผู้ดูแลต้องเรียก purge เอง
 
 ## Error codes ที่พบบ่อย
 
 | HTTP | ตัวอย่าง code | ความหมาย |
 |---:|---|---|
-| 400 | `invalid_json`, `invalid_owner_subject`, `invalid_size`, `invalid_scopes`, `invalid_department_id`, `invalid_folder_id`, `invalid_cursor`, `invalid_content_type`, `invalid_date_range` | รูปแบบหรือค่าที่ส่งไม่ผ่าน validation |
+| 400 | `invalid_json`, `invalid_owner_subject`, `invalid_size`, `invalid_scopes`, `invalid_department_id`, `invalid_folder_id`, `invalid_cursor`, `invalid_limit`, `invalid_content_type`, `invalid_date_range` | รูปแบบหรือค่าที่ส่งไม่ผ่าน validation |
 | 401 | `unauthorized` | ไม่มีหรือใช้ API key ไม่ได้ |
 | 403 | `forbidden`, `department_forbidden`, `department_grant_forbidden` | ไม่มี scope หรือ role ในหน่วยงาน |
 | 404 | `file_not_found`, `key_not_found`, `parent_folder_not_found`, `file_or_folder_not_found` | ไม่พบ resource ในขอบเขตที่เรียกได้ |
@@ -312,4 +316,4 @@ API verifies object and marks it available
 - ยังไม่ได้กำหนด MIME allowlist (`allowed_mime_types = null`) หรือ antivirus scanning
 - API key department roles ยังไม่ใช่ SSO/identity รายบุคคล; `ownerSubject` มาจาก request caller
 - ยังไม่มี versioning/restore, file sharing, audit trail หรือ quota รวมต่อหน่วยงาน
-- ถังขยะรองรับ 100 รายการล่าสุดต่อ request; ยังไม่มี pagination หรือการลบถาวร
+- ถังขยะมี pagination และลบถาวรด้วย Admin; ไม่มีนโยบายลบอัตโนมัติตามระยะเวลา

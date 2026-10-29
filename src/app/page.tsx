@@ -51,6 +51,7 @@ export default function Home() {
     const [tab, setTab] = useState<Tab>("files");
     const [files, setFiles] = useState<FileRow[]>([]);
     const [trashFiles, setTrashFiles] = useState<FileRow[]>([]);
+    const [trashCursor, setTrashCursor] = useState<string | null>(null);
     const [folders, setFolders] = useState<Folder[]>([]);
     const [departments, setDepartments] = useState<Department[]>([]);
     const [departmentId, setDepartmentId] = useState("");
@@ -119,10 +120,13 @@ export default function Home() {
     const loadKeys = useCallback(async () => setKeys((await api("/keys")).data.items), [api]);
 
     const loadTrash = useCallback(
-        async (selectedDepartmentId = departmentId) => {
-            const query = new URLSearchParams({ ownerSubject: owner });
+        async (selectedDepartmentId = departmentId, cursor?: string) => {
+            const query = new URLSearchParams({ ownerSubject: owner, limit: "25" });
             if (selectedDepartmentId) query.set("departmentId", selectedDepartmentId);
-            setTrashFiles((await api(`/files/trash?${query}`)).data.items);
+            if (cursor) query.set("cursor", cursor);
+            const data = (await api(`/files/trash?${query}`)).data as { items: FileRow[]; nextCursor: string | null };
+            setTrashFiles((previous) => cursor ? [...previous, ...data.items] : data.items);
+            setTrashCursor(data.nextCursor);
         },
         [api, owner, departmentId],
     );
@@ -313,6 +317,17 @@ export default function Home() {
         }
     }
 
+    async function purgeFile(file: FileRow) {
+        if (!confirm(`ลบ ${file.displayName ?? file.originalName} ถาวร? การดำเนินการนี้กู้คืนไม่ได้`)) return;
+        try {
+            await api(`/files/${file.id}/purge`, { method: "POST", body: JSON.stringify({ ownerSubject: owner }) });
+            await loadTrash();
+            setNotice("ส่งคำขอลบถาวรแล้ว ระบบจะลบ object ผ่าน worker");
+        } catch (error) {
+            setNotice(errorText(error));
+        }
+    }
+
     async function saveMetadata(event: React.FormEvent<HTMLFormElement>) {
         event.preventDefault();
         if (!selected) return;
@@ -373,6 +388,7 @@ export default function Home() {
 
     const selectedDepartment = departments.find((item) => item.id === departmentId);
     const canEditDepartment = selectedDepartment?.role === "admin" || selectedDepartment?.role === "editor";
+    const canAdminDepartment = selectedDepartment?.role === "admin";
 
     if (!connected)
         return (
@@ -688,6 +704,11 @@ export default function Home() {
                                                         กู้คืน
                                                     </button>
                                                 )}
+                                                {canAdminDepartment && (
+                                                    <button className="text-btn" onClick={() => void purgeFile(file)}>
+                                                        ลบถาวร
+                                                    </button>
+                                                )}
                                             </td>
                                         </tr>
                                     ))}
@@ -701,6 +722,11 @@ export default function Home() {
                                 </tbody>
                             </table>
                         </div>
+                        {trashCursor && (
+                            <button className="secondary" onClick={() => void loadTrash(departmentId, trashCursor).catch((error) => setNotice(errorText(error)))}>
+                                โหลดเพิ่ม
+                            </button>
+                        )}
                     </>
                 ) : (
                     <>

@@ -244,7 +244,7 @@
         },
         {
           "name": "List trash",
-          "request": { "method": "GET", "header": [], "url": "{{baseUrl}}/api/v1/files/trash?ownerSubject={{ownerSubject}}&departmentId={{departmentId}}", "description": "Requires files:read. Lists up to 100 trashed files in the selected department." }
+          "request": { "method": "GET", "header": [], "url": "{{baseUrl}}/api/v1/files/trash?ownerSubject={{ownerSubject}}&departmentId={{departmentId}}&limit=25", "description": "Requires files:read. Returns data.items and data.nextCursor. To fetch the next page, append &cursor=<nextCursor> with the same filters. Limit defaults to 25 and can be at most 100." }
         },
         {
           "name": "Restore file from trash",
@@ -253,7 +253,17 @@
             "header": [{ "key": "Content-Type", "value": "application/json" }],
             "body": { "mode": "raw", "raw": "{\n  \"ownerSubject\": \"{{ownerSubject}}\"\n}", "options": { "raw": { "language": "json" } } },
             "url": "{{baseUrl}}/api/v1/files/{{fileId}}/restore",
-            "description": "Requires files:write and Editor/Admin role in the file's department. Returns 200 when the file is available again."
+            "description": "Requires files:write and Editor/Admin role in the file's department. Checks that the Storage object exists. Returns 200 when available again; 409 object_not_found if missing."
+          }
+        },
+        {
+          "name": "Permanently delete file from trash",
+          "request": {
+            "method": "POST",
+            "header": [{ "key": "Content-Type", "value": "application/json" }],
+            "body": { "mode": "raw", "raw": "{\n  \"ownerSubject\": \"{{ownerSubject}}\"\n}", "options": { "raw": { "language": "json" } } },
+            "url": "{{baseUrl}}/api/v1/files/{{fileId}}/purge",
+            "description": "Requires files:write and Admin role in the file's department. Returns 202 and queues irreversible Storage deletion for the outbox worker."
           }
         }
       ]

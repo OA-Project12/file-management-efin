@@ -90,7 +90,9 @@ New key secrets are displayed only in the create response and cannot be retrieve
 - `POST /api/v1/files/{fileId}/complete` verifies that the object exists, checks its actual size against the configured limit, and changes its state to `available`. Oversized uploads are quarantined and removed where possible.
 - `POST /api/v1/files/{fileId}/download-url` requires `files:read` and an `ownerSubject`; it returns a five-minute signed URL only when the file belongs to the key's tenant/application and that owner.
 - `POST /api/v1/files/search` requires `files:read` and an `ownerSubject`; it returns available file metadata with cursor pagination, without exposing Storage object paths.
-- `POST /api/v1/files/{fileId}/delete` requires `files:write`; it atomically marks an available file as `deleting` and enqueues `file.object_delete_requested` in `filesvc.outbox`. It returns `202`; a worker must remove the Storage object and set the final status to `deleted`.
+- `POST /api/v1/files/{fileId}/delete` requires `files:write` and Editor/Admin role; it moves an available file to trash while retaining the Storage object. It returns `200` with `trashed: true`.
+- `GET /api/v1/files/trash` lists trashed files with cursor pagination. `POST /api/v1/files/{fileId}/restore` checks that the Storage object still exists before restoring an Editor/Admin-accessible file.
+- `POST /api/v1/files/{fileId}/purge` requires Admin role; it atomically queues permanent deletion in `filesvc.outbox` and returns `202`.
 - The outbox worker reads `file.object_delete_requested`, removes the Storage object idempotently, marks the file `deleted`, and marks the event processed. Failed events are retried with capped exponential backoff.
 
 ## Run the outbox worker locally
@@ -109,5 +111,5 @@ Run the worker in a second terminal:
 npm.cmd run worker:outbox
 ```
 
-It polls the outbox until stopped with `Ctrl+C`. After the worker is running, a `202` from the delete endpoint means the event is queued; the worker then removes the object and changes the file status to `deleted`.
+It polls the outbox until stopped with `Ctrl+C`. After the worker is running, a `202` from the purge endpoint means the event is queued; the worker then removes the object and changes the file status to `deleted`.
 - Upload tokens and signed URLs are bearer capabilities. Treat the response as a secret and do not log it. The current private bucket has no per-bucket size limit configured; set one in the Supabase Dashboard to match `MAX_UPLOAD_SIZE_BYTES` before relying on the API size check in production.
