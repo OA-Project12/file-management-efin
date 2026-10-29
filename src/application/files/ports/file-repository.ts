@@ -29,6 +29,9 @@ export interface FileSearchFilters {
   folderId?: string;
   departmentId?: string;
   tag?: string;
+  contentType?: string;
+  createdFrom?: string;
+  createdBefore?: string;
 }
 
 export type FileDeletionRequestResult =

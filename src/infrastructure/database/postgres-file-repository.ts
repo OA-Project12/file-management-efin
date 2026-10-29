@@ -102,6 +102,9 @@ export class PostgresFileRepository implements FileRepository {
           and ($7::uuid is null or f.folder_id = $7)
           and ($8::uuid is null or f.department_id = $8)
           and ($9::text is null or $9 = any(f.tags))
+          and ($11::text is null or lower(f.content_type) = $11)
+          and ($12::timestamptz is null or f.created_at >= $12)
+          and ($13::timestamptz is null or f.created_at < $13)
           and ($4::timestamptz is null or (f.created_at, f.id) < ($4::timestamptz, $5::uuid))
         order by f.created_at desc, f.id desc
         limit $6
@@ -117,6 +120,9 @@ export class PostgresFileRepository implements FileRepository {
         filters.departmentId ?? null,
         filters.tag ?? null,
         scope.departmentIds,
+        filters.contentType ?? null,
+        filters.createdFrom ?? null,
+        filters.createdBefore ?? null,
       ],
     );
 
