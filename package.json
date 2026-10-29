@@ -9,7 +9,8 @@
     "lint": "eslint",
     "key:create": "node --env-file=.env.local scripts/create-application-key.mjs",
     "storage:limits": "node --env-file=.env.local scripts/configure-storage-limits.mjs",
-    "worker:outbox": "node --env-file=.env.local scripts/process-outbox.mjs"
+    "worker:outbox": "node --env-file=.env.local scripts/process-outbox.mjs",
+    "admin:bootstrap": "node --env-file=.env.local scripts/bootstrap-tenant-admin.mjs"
   },
   "dependencies": {
     "@supabase/supabase-js": "^2.118.0",

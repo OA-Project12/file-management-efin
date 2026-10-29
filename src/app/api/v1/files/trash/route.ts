@@ -32,9 +32,9 @@ export async function GET(request: Request): Promise<Response> {
         if (!app) return fail("unauthorized", "A valid API key is required.", 401);
         if (!app.scopes.includes("files:read")) return fail("forbidden", "files:read scope is required.", 403);
         const query = new URL(request.url).searchParams;
-        const ownerSubject = query.get("ownerSubject")?.trim() ?? "";
+        const ownerSubject = app.userId ? null : query.get("ownerSubject")?.trim() ?? "";
         const departmentId = query.get("departmentId") || undefined;
-        if (!ownerSubject || ownerSubject.length > 255)
+        if (!app.userId && (!ownerSubject || ownerSubject.length > 255))
             return fail("invalid_owner_subject", "ownerSubject must contain 1 to 255 characters.", 400);
         if (departmentId && !UUID_PATTERN.test(departmentId)) return fail("invalid_department_id", "departmentId must be a UUID.", 400);
         if (departmentId && !hasDepartmentRole(app, departmentId, "viewer"))
@@ -51,6 +51,8 @@ export async function GET(request: Request): Promise<Response> {
                 applicationId: app.applicationId,
                 ownerSubject,
                 departmentIds: accessibleDepartmentIds(app),
+                userId: app.userId,
+                isTenantAdmin: app.isTenantAdmin,
             },
             limit + 1,
             cursor ?? undefined,

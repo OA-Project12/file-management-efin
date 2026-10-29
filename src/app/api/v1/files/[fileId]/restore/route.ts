@@ -1,4 +1,5 @@
 import { authenticateApplicationKey } from "@/infrastructure/auth/application-key-authenticator";
+import { canSeeFile } from "@/application/auth/folder-visibility";
 import { departmentIdsForRole } from "@/application/auth/department-authorization";
 import { PostgresFileRepository } from "@/infrastructure/database/postgres-file-repository";
 import { SupabaseObjectStorage } from "@/infrastructure/storage/supabase-object-storage";
@@ -14,17 +15,18 @@ export async function POST(request: Request, { params }: { params: Promise<{ fil
         if (!app.scopes.includes("files:write")) return fail("forbidden", "files:write scope is required.", 403);
         const { fileId } = await params;
         if (!UUID_PATTERN.test(fileId)) return fail("invalid_file_id", "fileId must be a UUID.", 400);
+        if (!await canSeeFile(app, fileId)) return fail("file_not_found", "File was not found in trash.", 404);
         let body: unknown;
         try {
             body = await request.json();
         } catch {
             return fail("invalid_json", "Request body must be valid JSON.", 400);
         }
-        const ownerSubject =
+        const ownerSubject = app.userId ? null :
             body && typeof body === "object" && !Array.isArray(body) && "ownerSubject" in body && typeof body.ownerSubject === "string"
                 ? body.ownerSubject.trim()
                 : "";
-        if (!ownerSubject || ownerSubject.length > 255)
+        if (!app.userId && (!ownerSubject || ownerSubject.length > 255))
             return fail("invalid_owner_subject", "ownerSubject must contain 1 to 255 characters.", 400);
         const scope = {
             tenantId: app.tenantId,

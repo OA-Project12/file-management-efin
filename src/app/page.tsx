@@ -1,6 +1,10 @@
 "use client";
 
-import { useCallback, useState } from "react";
+import { useCallback, useEffect, useState } from "react";
+import { getBrowserAuth } from "@/lib/browser-auth";
+import { useRouter } from "next/navigation";
+import { AdminUsers } from "./admin-users";
+import { FolderAccess } from "./folder-access";
 
 type FileRow = {
     id: string;
@@ -26,7 +30,7 @@ type KeyRow = {
     revokedAt: string | null;
     lastUsedAt: string | null;
 };
-type Tab = "files" | "trash" | "keys";
+type Tab = "files" | "trash" | "keys" | "users";
 type UploadResult = { name: string; status: "pending" | "uploading" | "completed" | "error"; message?: string };
 type BatchIntent = { index: number; status: "ready" | "error"; fileId?: string; signedUrl?: string; error?: { message: string } };
 
@@ -45,9 +49,14 @@ const formatBangkokDate = (value: string) => bangkokDate.format(new Date(value))
 const formatBangkokDateTime = (value: string) => bangkokDateTime.format(new Date(value));
 
 export default function Home() {
-    const [key, setKey] = useState("");
+    const router = useRouter();
+    const [email, setEmail] = useState("");
+    const [password, setPassword] = useState("");
     const [connected, setConnected] = useState(false);
     const [scopes, setScopes] = useState<string[]>([]);
+    const [isTenantAdmin, setIsTenantAdmin] = useState(false);
+    const [usersRevision, setUsersRevision] = useState(0);
+    const [showFolderAccess, setShowFolderAccess] = useState(false);
     const [tab, setTab] = useState<Tab>("files");
     const [files, setFiles] = useState<FileRow[]>([]);
     const [trashFiles, setTrashFiles] = useState<FileRow[]>([]);
@@ -71,15 +80,17 @@ export default function Home() {
 
     const api = useCallback(
         async (path: string, init: RequestInit = {}) => {
+            const { data: { session } } = await getBrowserAuth().auth.getSession();
+            if (!session) throw new Error("กรุณาเข้าสู่ระบบอีกครั้ง");
             const response = await fetch(`/api/v1${path}`, {
                 ...init,
-                headers: { Authorization: `Bearer ${key}`, ...(init.body ? { "Content-Type": "application/json" } : {}), ...init.headers },
+                headers: { Authorization: `Bearer ${session.access_token}`, ...(init.body ? { "Content-Type": "application/json" } : {}), ...init.headers },
             });
             const body = await response.json().catch(() => ({}));
             if (!response.ok) throw new Error(body?.error?.message ?? `Request failed (${response.status})`);
             return body;
         },
-        [key],
+        [],
     );
 
     const loadDepartments = useCallback(async () => {
@@ -171,10 +182,15 @@ export default function Home() {
         setBusy(true);
         setNotice("");
         try {
-            const res = await fetch("/api/v1/me", { headers: { Authorization: `Bearer ${key}` } });
-            if (!res.ok) throw new Error("API key ใช้ไม่ได้หรือไม่มีสิทธิ์");
+            const { error: signInError } = await getBrowserAuth().auth.signInWithPassword({ email, password });
+            if (signInError) throw signInError;
+            const { data: { session } } = await getBrowserAuth().auth.getSession();
+            const res = await fetch("/api/v1/me", { headers: { Authorization: `Bearer ${session?.access_token ?? ""}` } });
+            if (!res.ok) throw new Error("บัญชีนี้ยังไม่มีสิทธิ์ใน tenant หรือ application");
             const identity = await res.json();
+            setOwner(identity.userId);
             setScopes(identity.scopes ?? []);
+            setIsTenantAdmin(Boolean(identity.isTenantAdmin));
             setConnected(true);
             const available = await loadDepartments();
             const initialDepartmentId = available[0]?.id ?? "";
@@ -185,6 +201,56 @@ export default function Home() {
         } finally {
             setBusy(false);
         }
+    }
+
+    useEffect(() => {
+        if (connected) return;
+        if (new URLSearchParams(window.location.hash.slice(1)).get("type") === "invite") {
+            router.replace(`/set-password${window.location.search}${window.location.hash}`);
+            return;
+        }
+        let active = true;
+        getBrowserAuth().auth.getSession().then(async ({ data: { session } }) => {
+            if (!session || !active) return;
+            const response = await fetch("/api/v1/me", { headers: { Authorization: `Bearer ${session.access_token}` } });
+            if (!response.ok || !active) return;
+            const identity = await response.json();
+            if (!active) return;
+            setOwner(identity.userId);
+            setScopes(identity.scopes ?? []);
+            setIsTenantAdmin(Boolean(identity.isTenantAdmin));
+            setConnected(true);
+            const departments = await api("/departments");
+            if (!active) return;
+            setDepartments(departments.data.items);
+            setDepartmentId(departments.data.items[0]?.id ?? "");
+        }).catch(() => undefined);
+        return () => { active = false; };
+    }, [connected, api, router]);
+
+    async function logout() {
+        await getBrowserAuth().auth.signOut();
+        setConnected(false);
+        setDepartments([]);
+        setFiles([]);
+        setTrashFiles([]);
+        setOwner("");
+        setIsTenantAdmin(false);
+    }
+
+    async function inviteUser() {
+        if (!departmentId) { setNotice("กรุณาเลือกหน่วยงานก่อน"); return; }
+        const invitedEmail = window.prompt("อีเมลผู้ใช้ที่ต้องการเชิญ");
+        if (!invitedEmail?.trim()) return;
+        const role = window.prompt("สิทธิ์ในหน่วยงานนี้: admin, editor หรือ viewer", "viewer")?.trim().toLowerCase();
+        if (role !== "admin" && role !== "editor" && role !== "viewer") { setNotice("สิทธิ์ไม่ถูกต้อง"); return; }
+        try {
+            await api("/users/invite", { method: "POST", body: JSON.stringify({
+                email: invitedEmail.trim(), departmentGrants: [{ departmentId, role }],
+            }) });
+            setNotice(`ส่งคำเชิญไปยัง ${invitedEmail.trim()} แล้ว`);
+            setUsersRevision((value) => value + 1);
+        } catch (error) { setNotice(errorText(error)); }
     }
 
     async function createFolder() {
@@ -335,6 +401,8 @@ export default function Home() {
         const targetDepartmentId = String(form.get("departmentId") || selected.departmentId);
         const selectedFolderId = String(form.get("folderId") || "");
         const targetFolderId = targetDepartmentId === selected.departmentId ? selectedFolderId : "";
+        if ((targetDepartmentId !== selected.departmentId || targetFolderId !== (selected.folderId ?? "")) &&
+            !window.confirm("การย้ายไฟล์จะเปลี่ยนผู้ที่มองเห็นไฟล์ตามสิทธิ์ของโฟลเดอร์ปลายทาง ดำเนินการต่อหรือไม่?")) return;
         try {
             await api(`/files/${selected.id}/metadata`, {
                 method: "PATCH",
@@ -397,22 +465,30 @@ export default function Home() {
                     <div className="logo">E</div>
                     <p className="overline">EFIN · DOCUMENTS</p>
                     <h1>พื้นที่จัดการเอกสาร</h1>
-                    <p>เชื่อมต่อ File Storage API เพื่อจัดการไฟล์และโฟลเดอร์</p>
+                    <p>เข้าสู่ระบบด้วยบัญชีที่ Admin เชิญ</p>
                     <label>
-                        Application API key
+                        อีเมล
+                        <input
+                            type="email"
+                            value={email}
+                            onChange={(e) => setEmail(e.target.value)}
+                            autoComplete="email"
+                            required
+                        />
+                    </label>
+                    <label>
+                        รหัสผ่าน
                         <input
                             type="password"
-                            value={key}
-                            onChange={(e) => setKey(e.target.value)}
-                            placeholder="fsvc_…"
-                            autoComplete="off"
+                            value={password}
+                            onChange={(e) => setPassword(e.target.value)}
+                            autoComplete="current-password"
                             required
                         />
                     </label>
                     <button className="primary" disabled={busy}>
-                        {busy ? "กำลังเชื่อมต่อ…" : "เชื่อมต่อ API"}
+                        {busy ? "กำลังเข้าสู่ระบบ…" : "เข้าสู่ระบบ"}
                     </button>
-                    <small>Key เก็บใน memory ของหน้านี้เท่านั้น และจะหายเมื่อ reload</small>
                     {notice && <div className="notice">{notice}</div>}
                 </form>
             </main>
@@ -427,6 +503,8 @@ export default function Home() {
                         EFIN <span>DMS</span>
                     </b>
                 </div>
+                {isTenantAdmin && <button className="nav" onClick={() => void inviteUser()}>＋ เชิญผู้ใช้</button>}
+                {isTenantAdmin && <button className={tab === "users" ? "nav active" : "nav"} onClick={() => setTab("users")}>♙　จัดการผู้ใช้</button>}
                 <div className="caption">WORKSPACE</div>
                 <div className="workspace">◈　Company files　⌄</div>
                 <button className={tab === "files" ? "nav active" : "nav"} onClick={() => setTab("files")}>
@@ -475,12 +553,7 @@ export default function Home() {
                 ))}
                 <div className="side-bottom">
                     <i /> {selectedDepartment?.role ?? "ไม่มีสิทธิ์"}{" "}
-                    <button
-                        onClick={() => {
-                            setConnected(false);
-                            setKey("");
-                        }}
-                    >
+                    <button onClick={() => void logout()}>
                         ออก
                     </button>
                 </div>
@@ -489,7 +562,7 @@ export default function Home() {
                 <header className="topbar">
                     <span>
                         Workspace　/　{selectedDepartment?.name ?? "คลังหน่วยงาน"}　/　
-                        {tab === "files" ? (folderId ? "โฟลเดอร์" : "เอกสารทั้งหมด") : tab === "trash" ? "ถังขยะ" : "API keys"}
+                        {tab === "files" ? (folderId ? "โฟลเดอร์" : "เอกสารทั้งหมด") : tab === "trash" ? "ถังขยะ" : tab === "users" ? "จัดการผู้ใช้" : "API keys"}
                     </span>
                     <button className="quiet" onClick={() => void Promise.all([loadDepartments(), loadFolders(), search(), loadTrash()])}>
                         ↻　Refresh
@@ -513,6 +586,7 @@ export default function Home() {
                                 <p>คลังแยกตามหน่วยงาน · สิทธิ์ {selectedDepartment?.role ?? "ไม่มี"}</p>
                             </div>
                             <div className="actions">
+                                {isTenantAdmin && folderId && <button className="secondary" onClick={() => setShowFolderAccess(true)}>สิทธิ์โฟลเดอร์</button>}
                                 <button
                                     className="secondary"
                                     onClick={() => {
@@ -537,15 +611,7 @@ export default function Home() {
                             </div>
                         </div>
                         <div className="filters">
-                            <label className="search">
-                                ⌕{" "}
-                                <input
-                                    value={owner}
-                                    onChange={(e) => setOwner(e.target.value)}
-                                    onKeyDown={(e) => e.key === "Enter" && void search()}
-                                    placeholder="ownerSubject"
-                                />
-                            </label>
+                            <span className="search">ไฟล์ในหน่วยงาน</span>
                             <input value={tag} onChange={(e) => setTag(e.target.value)} placeholder="Tag" aria-label="Tag" />
                             <input
                                 value={contentType}
@@ -728,6 +794,8 @@ export default function Home() {
                             </button>
                         )}
                     </>
+                ) : tab === "users" ? (
+                    <AdminUsers key={usersRevision} api={api} departments={departments} onNotice={setNotice} />
                 ) : (
                     <>
                         <div className="heading">
@@ -911,6 +979,7 @@ export default function Home() {
                     </section>
                 </div>
             )}
+            {showFolderAccess && folderId && <FolderAccess folderId={folderId} departmentId={departmentId} api={api} onClose={() => setShowFolderAccess(false)} onSaved={() => { setShowFolderAccess(false); void loadFolders(); void search(); }} onNotice={setNotice} />}
         </main>
     );
 }

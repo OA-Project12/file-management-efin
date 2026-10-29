@@ -1,5 +1,6 @@
 import { CreateFileDownloadGrant } from "@/application/files/create-file-download-grant";
 import { authenticateApplicationKey } from "@/infrastructure/auth/application-key-authenticator";
+import { canSeeFile } from "@/application/auth/folder-visibility";
 import { PostgresFileRepository } from "@/infrastructure/database/postgres-file-repository";
 import { SupabaseObjectStorage } from "@/infrastructure/storage/supabase-object-storage";
 
@@ -49,6 +50,7 @@ export async function POST(request: Request, context: { params: Promise<{ fileId
 
         const { fileId } = await context.params;
         if (!UUID_PATTERN.test(fileId)) return errorResponse("invalid_file_id", "fileId must be a UUID.", 400);
+        if (!await canSeeFile(application, fileId)) return errorResponse("file_not_found", "File was not found.", 404);
 
         let body: DownloadUrlRequest;
         try {
@@ -60,8 +62,8 @@ export async function POST(request: Request, context: { params: Promise<{ fileId
             return errorResponse("invalid_json", "Request body must be valid JSON.", 400);
         }
 
-        const ownerSubject = typeof body.ownerSubject === "string" ? body.ownerSubject.trim() : "";
-        if (!ownerSubject || ownerSubject.length > 255) {
+        const ownerSubject = application.userId ? null : typeof body.ownerSubject === "string" ? body.ownerSubject.trim() : "";
+        if (!application.userId && (!ownerSubject || ownerSubject.length > 255)) {
             return errorResponse("invalid_owner_subject", "ownerSubject must contain 1 to 255 characters.", 400);
         }
 

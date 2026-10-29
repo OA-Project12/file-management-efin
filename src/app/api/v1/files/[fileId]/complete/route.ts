@@ -1,4 +1,5 @@
 import { authenticateApplicationKey } from "@/infrastructure/auth/application-key-authenticator";
+import { canSeeFile } from "@/application/auth/folder-visibility";
 import { SupabaseObjectStorage } from "@/infrastructure/storage/supabase-object-storage";
 import { PostgresUploadIntentRepository } from "@/infrastructure/database/postgres-upload-intent-repository";
 import { departmentIdsForRole, hasDepartmentRole } from "@/application/auth/department-authorization";
@@ -29,6 +30,7 @@ export async function POST(request: Request, context: { params: Promise<{ fileId
         const repository = new PostgresUploadIntentRepository();
         const upload = await repository.findUpload(fileId, application.tenantId, application.applicationId);
         if (!upload) return errorResponse("file_not_found", "Upload intent was not found.", 404);
+        if (!await canSeeFile(application, fileId)) return errorResponse("file_not_found", "Upload intent was not found.", 404);
         if (!hasDepartmentRole(application, upload.departmentId, "editor"))
             return errorResponse("department_forbidden", "Editor access to this department is required.", 403);
         if (upload.status === "available" && upload.completedAt) {

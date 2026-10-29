@@ -59,10 +59,11 @@ export class PostgresFileRepository implements FileRepository {
        where id = $1
          and tenant_id = $2
          and application_id = $3
-         and owner_subject = $4
+         and ($4::text is null or owner_subject = $4)
          and department_id = any($5::uuid[])
+         and ($6::uuid is null or $7::boolean or filesvc.folder_visible(tenant_id, application_id, department_id, folder_id, $6::uuid))
          and status = 'available'`,
-            [fileId, scope.tenantId, scope.applicationId, scope.ownerSubject, scope.departmentIds],
+            [fileId, scope.tenantId, scope.applicationId, scope.ownerSubject, scope.departmentIds, scope.userId ?? null, scope.isTenantAdmin ?? false],
         );
 
         const row = result.rows[0];
@@ -98,10 +99,11 @@ export class PostgresFileRepository implements FileRepository {
           on d.id = f.department_id and d.tenant_id = f.tenant_id and d.application_id = f.application_id
         where f.tenant_id = $1
           and f.application_id = $2
-          and f.owner_subject = $3
+          and ($3::text is null or f.owner_subject = $3)
           and f.status = 'available'
           and f.deleted_at is null
           and f.department_id = any($10::uuid[])
+          and ($14::uuid is null or $15::boolean or filesvc.folder_visible(f.tenant_id, f.application_id, f.department_id, f.folder_id, $14::uuid))
           and ($7::uuid is null or f.folder_id = $7)
           and ($8::uuid is null or f.department_id = $8)
           and ($9::text is null or $9 = any(f.tags))
@@ -126,6 +128,8 @@ export class PostgresFileRepository implements FileRepository {
                 filters.contentType ?? null,
                 filters.createdFrom ?? null,
                 filters.createdBefore ?? null,
+                scope.userId ?? null,
+                scope.isTenantAdmin ?? false,
             ],
         );
 
@@ -151,7 +155,7 @@ export class PostgresFileRepository implements FileRepository {
           where id = $1
             and tenant_id = $2
             and application_id = $3
-            and owner_subject = $4
+            and ($4::text is null or owner_subject = $4)
             and department_id = any($5::uuid[])
         `,
             [fileId, scope.tenantId, scope.applicationId, scope.ownerSubject, scope.departmentIds],
@@ -164,7 +168,7 @@ export class PostgresFileRepository implements FileRepository {
 
         const updated = await this.pool.query(
             `update filesvc.files set status = 'deleted', deleted_at = now(), trashed_at = now(), updated_at = now()
-       where id = $1 and tenant_id = $2 and application_id = $3 and owner_subject = $4
+       where id = $1 and tenant_id = $2 and application_id = $3 and ($4::text is null or owner_subject = $4)
          and department_id = any($5::uuid[]) and status = 'available'
        returning id`,
             [fileId, scope.tenantId, scope.applicationId, scope.ownerSubject, scope.departmentIds],
@@ -179,8 +183,9 @@ export class PostgresFileRepository implements FileRepository {
               to_char(f.trashed_at at time zone 'UTC', 'YYYY-MM-DD"T"HH24:MI:SS.US"Z"') as trashed_at_cursor
        from filesvc.files f
        join filesvc.departments d on d.id = f.department_id and d.tenant_id = f.tenant_id and d.application_id = f.application_id
-       where f.tenant_id = $1 and f.application_id = $2 and f.owner_subject = $3
+       where f.tenant_id = $1 and f.application_id = $2 and ($3::text is null or f.owner_subject = $3)
          and f.department_id = any($4::uuid[]) and f.status = 'deleted' and f.trashed_at is not null
+         and ($9::uuid is null or $10::boolean or filesvc.folder_visible(f.tenant_id, f.application_id, f.department_id, f.folder_id, $9::uuid))
          and ($5::uuid is null or f.department_id = $5)
          and ($6::timestamptz is null or (f.trashed_at, f.id) < ($6::timestamptz, $7::uuid))
        order by f.trashed_at desc, f.id desc limit $8`,
@@ -193,6 +198,8 @@ export class PostgresFileRepository implements FileRepository {
                 before?.trashedAt ?? null,
                 before?.fileId ?? null,
                 limit,
+                scope.userId ?? null,
+                scope.isTenantAdmin ?? false,
             ],
         );
         return result.rows.map((row) => ({
@@ -214,7 +221,7 @@ export class PostgresFileRepository implements FileRepository {
     async findTrashedObject(fileId: string, scope: FileScope): Promise<TrashedObject | null> {
         const result = await this.pool.query<{ bucket_id: string; object_key: string }>(
             `select bucket_id, object_key from filesvc.files
-       where id = $1 and tenant_id = $2 and application_id = $3 and owner_subject = $4
+       where id = $1 and tenant_id = $2 and application_id = $3 and ($4::text is null or owner_subject = $4)
          and department_id = any($5::uuid[]) and status = 'deleted' and trashed_at is not null`,
             [fileId, scope.tenantId, scope.applicationId, scope.ownerSubject, scope.departmentIds],
         );
@@ -225,7 +232,7 @@ export class PostgresFileRepository implements FileRepository {
     async restore(fileId: string, scope: FileScope): Promise<"restored" | "not_found"> {
         const result = await this.pool.query(
             `update filesvc.files set status = 'available', deleted_at = null, trashed_at = null, updated_at = now()
-       where id = $1 and tenant_id = $2 and application_id = $3 and owner_subject = $4
+       where id = $1 and tenant_id = $2 and application_id = $3 and ($4::text is null or owner_subject = $4)
          and department_id = any($5::uuid[]) and status = 'deleted' and trashed_at is not null
        returning id`,
             [fileId, scope.tenantId, scope.applicationId, scope.ownerSubject, scope.departmentIds],
@@ -239,7 +246,7 @@ export class PostgresFileRepository implements FileRepository {
             await client.query("begin");
             const result = await client.query<{ bucket_id: string; object_key: string }>(
                 `select bucket_id, object_key from filesvc.files
-         where id = $1 and tenant_id = $2 and application_id = $3 and owner_subject = $4
+         where id = $1 and tenant_id = $2 and application_id = $3 and ($4::text is null or owner_subject = $4)
            and department_id = any($5::uuid[]) and status = 'deleted' and trashed_at is not null
          for update`,
                 [fileId, scope.tenantId, scope.applicationId, scope.ownerSubject, scope.departmentIds],
