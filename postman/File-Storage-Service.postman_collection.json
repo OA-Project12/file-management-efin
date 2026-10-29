@@ -25,6 +25,9 @@
     { "key": "folderName", "value": "Contracts", "type": "string" },
     { "key": "displayName", "value": "Sample PDF", "type": "string" },
     { "key": "tag", "value": "contract", "type": "string" },
+    { "key": "searchContentType", "value": "application/pdf", "type": "string", "description": "Optional exact MIME type filter; use an empty value to omit." },
+    { "key": "createdFrom", "value": "", "type": "string", "description": "Optional YYYY-MM-DD UTC start date." },
+    { "key": "createdTo", "value": "", "type": "string", "description": "Optional YYYY-MM-DD UTC end date, inclusive." },
     { "key": "fileName", "value": "sample.pdf", "type": "string" },
     { "key": "contentType", "value": "application/pdf", "type": "string" },
     { "key": "sizeBytes", "value": "12345", "type": "string", "description": "Exact file size in bytes. Must match the binary selected in Upload file to Storage." },
@@ -184,9 +187,9 @@
           "request": {
             "method": "POST",
             "header": [{ "key": "Content-Type", "value": "application/json" }],
-            "body": { "mode": "raw", "raw": "{\n  \"ownerSubject\": \"{{ownerSubject}}\",\n  \"departmentId\": \"{{departmentId}}\",\n  \"folderId\": \"{{folderId}}\",\n  \"tag\": \"{{tag}}\",\n  \"limit\": 25,\n  \"cursor\": null\n}", "options": { "raw": { "language": "json" } } },
+            "body": { "mode": "raw", "raw": "{\n  \"ownerSubject\": \"{{ownerSubject}}\",\n  \"departmentId\": \"{{departmentId}}\",\n  \"folderId\": \"{{folderId}}\",\n  \"tag\": \"{{tag}}\",\n  \"contentType\": \"{{searchContentType}}\",\n  \"createdFrom\": \"{{createdFrom}}\",\n  \"createdTo\": \"{{createdTo}}\",\n  \"limit\": 25,\n  \"cursor\": null\n}", "options": { "raw": { "language": "json" } } },
             "url": "{{baseUrl}}/api/v1/files/search",
-            "description": "Requires files:read. Use nextCursor from the response as cursor in the next page request."
+            "description": "Requires files:read. contentType matches an exact MIME type. createdFrom/createdTo are optional YYYY-MM-DD UTC dates, with createdTo inclusive. Use nextCursor from the response as cursor in the next page request."
           }
         },
         {

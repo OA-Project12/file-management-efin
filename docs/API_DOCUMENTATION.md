@@ -199,12 +199,15 @@ Content-Type: <CONTENT_TYPE>
   "departmentId": "<OPTIONAL_DEPARTMENT_UUID>",
   "folderId": "<OPTIONAL_FOLDER_UUID>",
   "tag": "contract",
+  "contentType": "application/pdf",
+  "createdFrom": "2026-10-01",
+  "createdTo": "2026-10-29",
   "limit": 25,
   "cursor": null
 }
 ```
 
-`ownerSubject` required 1–255 ตัวอักษร; `departmentId`, `folderId`, `tag` optional; ไม่ระบุ department จะค้นในทุก department ที่ key เข้าถึงได้; `limit` 1–100 (default 25); `cursor` ใช้ค่าจาก response ก่อนหน้า
+`ownerSubject` required 1–255 ตัวอักษร; `departmentId`, `folderId`, `tag`, `contentType`, `createdFrom`, `createdTo` optional; `contentType` กรอง MIME type แบบตรงค่าโดยไม่สนตัวพิมพ์เล็ก/ใหญ่; วันที่ต้องเป็น `YYYY-MM-DD` ตาม UTC โดยรวมวัน `createdTo` ทั้งวัน; ส่งวันเดียวได้ และ `createdFrom` ต้องไม่เกิน `createdTo`; ไม่ระบุ department จะค้นในทุก department ที่ key เข้าถึงได้; `limit` 1–100 (default 25); `cursor` ใช้ค่าจาก response ก่อนหน้า
 
 คืน `200` พร้อม `data.items[]` (id, fileName, contentType, sizeBytes, status, createdAt และข้อมูล metadata ที่มี) และ `nextCursor` ซึ่งเป็น `null` เมื่อไม่มีหน้าถัดไป
 
@@ -252,7 +255,7 @@ Content-Type: <CONTENT_TYPE>
 
 | HTTP | ตัวอย่าง code | ความหมาย |
 |---:|---|---|
-| 400 | `invalid_json`, `invalid_owner_subject`, `invalid_size`, `invalid_scopes`, `invalid_department_id`, `invalid_folder_id`, `invalid_cursor` | รูปแบบหรือค่าที่ส่งไม่ผ่าน validation |
+| 400 | `invalid_json`, `invalid_owner_subject`, `invalid_size`, `invalid_scopes`, `invalid_department_id`, `invalid_folder_id`, `invalid_cursor`, `invalid_content_type`, `invalid_date_range` | รูปแบบหรือค่าที่ส่งไม่ผ่าน validation |
 | 401 | `unauthorized` | ไม่มีหรือใช้ API key ไม่ได้ |
 | 403 | `forbidden`, `department_forbidden`, `department_grant_forbidden` | ไม่มี scope หรือ role ในหน่วยงาน |
 | 404 | `file_not_found`, `key_not_found`, `parent_folder_not_found`, `file_or_folder_not_found` | ไม่พบ resource ในขอบเขตที่เรียกได้ |
