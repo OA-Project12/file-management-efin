@@ -1,6 +1,8 @@
 "use client";
 
 import { useCallback, useEffect, useState } from "react";
+import { RefreshCw } from "lucide-react";
+import { DialogShell } from "@/components/ui/dialog-shell";
 
 type Role = "admin" | "editor" | "viewer";
 type Department = { id: string; name: string };
@@ -17,27 +19,35 @@ type Props = {
     api: (path: string, init?: RequestInit) => Promise<unknown>;
     departments: Department[];
     onNotice: (message: string) => void;
+    onInvite: () => void;
 };
 
-export function AdminUsers({ api, departments, onNotice }: Props) {
+export function AdminUsers({ api, departments, onNotice, onInvite }: Props) {
     const [users, setUsers] = useState<User[]>([]);
     const [page, setPage] = useState<number | null>(1);
     const [selected, setSelected] = useState<User | null>(null);
     const [grants, setGrants] = useState<Grant[]>([]);
     const [status, setStatus] = useState<"active" | "suspended">("active");
     const [busy, setBusy] = useState(false);
+    const [loading, setLoading] = useState(false);
+    const [loadError, setLoadError] = useState("");
+    const [saveError, setSaveError] = useState("");
 
     const load = useCallback(
         async (targetPage = 1) => {
+            setLoading(true);
+            setLoadError("");
             try {
                 const response = (await api(`/users?page=${targetPage}`)) as { data: { items: User[]; nextPage: number | null } };
                 setUsers((previous) => (targetPage === 1 ? response.data.items : [...previous, ...response.data.items]));
                 setPage(response.data.nextPage);
             } catch (error) {
-                onNotice(error instanceof Error ? error.message : "โหลดรายชื่อผู้ใช้ไม่สำเร็จ");
+                setLoadError(error instanceof Error ? error.message : "โหลดรายชื่อผู้ใช้ไม่สำเร็จ");
+            } finally {
+                setLoading(false);
             }
         },
-        [api, onNotice],
+        [api],
     );
 
     useEffect(() => {
@@ -48,6 +58,7 @@ export function AdminUsers({ api, departments, onNotice }: Props) {
     }, [load]);
 
     function choose(user: User) {
+        setSaveError("");
         setSelected(user);
         setGrants(user.departmentGrants.map((grant) => ({ ...grant })));
         setStatus(user.status);
@@ -56,13 +67,14 @@ export function AdminUsers({ api, departments, onNotice }: Props) {
     async function save() {
         if (!selected) return;
         setBusy(true);
+        setSaveError("");
         try {
             await api(`/users/${selected.userId}`, { method: "PATCH", body: JSON.stringify({ status, departmentGrants: grants }) });
             onNotice("บันทึกสิทธิ์ผู้ใช้แล้ว");
             setSelected(null);
             await load();
         } catch (error) {
-            onNotice(error instanceof Error ? error.message : "บันทึกสิทธิ์ไม่สำเร็จ");
+            setSaveError(error instanceof Error ? error.message : "บันทึกสิทธิ์ไม่สำเร็จ");
         } finally {
             setBusy(false);
         }
@@ -75,11 +87,10 @@ export function AdminUsers({ api, departments, onNotice }: Props) {
                     <h1>จัดการผู้ใช้</h1>
                     <p>สมาชิกและสิทธิ์รายหน่วยงาน</p>
                 </div>
-                <button className="secondary" onClick={() => void load()}>
-                    ↻ โหลดใหม่
-                </button>
+                <div className="actions"><button className="secondary" disabled={loading} onClick={() => void load()}><RefreshCw size={17} aria-hidden="true" /> โหลดใหม่</button><button className="primary" onClick={onInvite}>เชิญผู้ใช้</button></div>
             </div>
-            <div className="table-box">
+            {loadError && <div className="state-panel error-state" role="alert"><h2>โหลดรายชื่อผู้ใช้ไม่สำเร็จ</h2><p>{loadError}</p><button className="secondary" onClick={() => void load()}>ลองใหม่</button></div>}
+            <div className="table-box stack-table" aria-busy={loading}>
                 <table>
                     <thead>
                         <tr>
@@ -93,9 +104,9 @@ export function AdminUsers({ api, departments, onNotice }: Props) {
                     <tbody>
                         {users.map((user) => (
                             <tr key={user.userId}>
-                                <td>{user.email ?? user.userId}</td>
-                                <td>{user.status === "active" ? "ใช้งาน" : "ระงับ"}</td>
-                                <td>
+                                <td data-label="อีเมล">{user.email ?? user.userId}</td>
+                                <td data-label="สถานะ">{user.status === "active" ? "ใช้งาน" : "ระงับ"}</td>
+                                <td data-label="สิทธิ์">
                                     {user.isTenantAdmin
                                         ? "Tenant Admin"
                                         : user.departmentGrants
@@ -105,8 +116,8 @@ export function AdminUsers({ api, departments, onNotice }: Props) {
                                               )
                                               .join(", ") || "ไม่มีสิทธิ์"}
                                 </td>
-                                <td>{new Date(user.createdAt).toLocaleDateString("th-TH", { timeZone: "Asia/Bangkok" })}</td>
-                                <td>
+                                <td data-label="วันที่เพิ่ม">{new Date(user.createdAt).toLocaleDateString("th-TH", { timeZone: "Asia/Bangkok" })}</td>
+                                <td data-label="การดำเนินการ">
                                     {!user.isTenantAdmin && (
                                         <button className="text-btn" onClick={() => choose(user)}>
                                             แก้สิทธิ์
@@ -117,15 +128,16 @@ export function AdminUsers({ api, departments, onNotice }: Props) {
                         ))}
                     </tbody>
                 </table>
-                {users.length === 0 && <div className="empty">ยังไม่มีผู้ใช้</div>}
+                {loading && users.length === 0 && <div className="empty" role="status">กำลังโหลดรายชื่อผู้ใช้…</div>}
+                {!loading && !loadError && users.length === 0 && <div className="empty">ยังไม่มีผู้ใช้ใน tenant นี้</div>}
             </div>
             {page && (
-                <button className="secondary users-more" onClick={() => void load(page)}>
+                <button className="secondary users-more" disabled={loading} onClick={() => void load(page)}>
                     โหลดเพิ่ม
                 </button>
             )}
             {selected && (
-                <div className="modal" role="dialog" aria-modal="true" aria-label="แก้สิทธิ์ผู้ใช้">
+                <DialogShell open={Boolean(selected)} onOpenChange={(open) => { if (!open && !busy) setSelected(null); }} title="แก้สิทธิ์ผู้ใช้">
                     <section className="users-dialog">
                         <h2>แก้สิทธิ์ผู้ใช้</h2>
                         <p>{selected.email ?? selected.userId}</p>
@@ -137,6 +149,7 @@ export function AdminUsers({ api, departments, onNotice }: Props) {
                             </select>
                         </label>
                         <h3>สิทธิ์ตามหน่วยงาน</h3>
+                        <p>Viewer ดูไฟล์, Editor จัดการไฟล์, Admin จัดการไฟล์และสิทธิ์ในหน่วยงาน</p>
                         {departments.map((department) => {
                             const grant = grants.find((item) => item.departmentId === department.id);
                             return (
@@ -164,6 +177,7 @@ export function AdminUsers({ api, departments, onNotice }: Props) {
                                 </label>
                             );
                         })}
+                        {saveError && <p className="field-error" role="alert">{saveError}</p>}
                         <div className="users-actions">
                             <button className="secondary" disabled={busy} onClick={() => setSelected(null)}>
                                 ยกเลิก
@@ -173,7 +187,7 @@ export function AdminUsers({ api, departments, onNotice }: Props) {
                             </button>
                         </div>
                     </section>
-                </div>
+                </DialogShell>
             )}
         </div>
     );

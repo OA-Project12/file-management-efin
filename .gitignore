@@ -23,6 +23,18 @@
 # misc
 .DS_Store
 *.pem
+/.agents/
+/postman/
+/docs/
+/prototype/
+
+# Supabase local state and secrets (keep migrations and rollbacks tracked)
+/supabase/.temp/
+/supabase/.branches/
+/supabase/.env
+/supabase/.env.*
+!/supabase/migrations/
+!/supabase/rollbacks/
 
 # debug
 npm-debug.log*

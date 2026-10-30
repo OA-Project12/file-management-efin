@@ -1,5 +1,7 @@
 "use client";
 
+import { DialogShell } from "@/components/ui/dialog-shell";
+
 import { useEffect, useState } from "react";
 
 type Api = (path: string, init?: RequestInit) => Promise<unknown>;
@@ -19,6 +21,9 @@ export function FolderAccess({ folderId, departmentId, api, onClose, onSaved, on
     const [users, setUsers] = useState<User[]>([]);
     const [loading, setLoading] = useState(true);
     const [busy, setBusy] = useState(false);
+    const [loadError, setLoadError] = useState("");
+    const [saveError, setSaveError] = useState("");
+    const [revision, setRevision] = useState(0);
 
     useEffect(() => {
         let active = true;
@@ -45,7 +50,7 @@ export function FolderAccess({ folderId, departmentId, api, onClose, onSaved, on
                 setUserIds(access.data.userIds.filter((id) => eligible.some((member) => member.userId === id)));
                 setUsers(eligible);
             } catch (error) {
-                if (active) onNotice(error instanceof Error ? error.message : "โหลดสิทธิ์โฟลเดอร์ไม่สำเร็จ");
+                if (active) setLoadError(error instanceof Error ? error.message : "โหลดสิทธิ์โฟลเดอร์ไม่สำเร็จ");
             } finally {
                 if (active) setLoading(false);
             }
@@ -54,10 +59,11 @@ export function FolderAccess({ folderId, departmentId, api, onClose, onSaved, on
         return () => {
             active = false;
         };
-    }, [api, departmentId, folderId, onNotice]);
+    }, [api, departmentId, folderId, revision]);
 
     async function save() {
         setBusy(true);
+        setSaveError("");
         try {
             await api(`/folders/${folderId}/access`, {
                 method: "PATCH",
@@ -66,18 +72,20 @@ export function FolderAccess({ folderId, departmentId, api, onClose, onSaved, on
             onNotice("บันทึกสิทธิ์โฟลเดอร์แล้ว");
             onSaved();
         } catch (error) {
-            onNotice(error instanceof Error ? error.message : "บันทึกสิทธิ์โฟลเดอร์ไม่สำเร็จ");
+            setSaveError(error instanceof Error ? error.message : "บันทึกสิทธิ์โฟลเดอร์ไม่สำเร็จ");
         } finally {
             setBusy(false);
         }
     }
 
     return (
-        <div className="modal" role="dialog" aria-modal="true" aria-label="จัดการสิทธิ์โฟลเดอร์">
+        <DialogShell open onOpenChange={(open) => { if (!open && !busy) onClose(); }} title="จัดการสิทธิ์โฟลเดอร์">
             <section className="folder-access-dialog">
                 <h2>สิทธิ์โฟลเดอร์</h2>
                 {loading ? (
-                    <p>กำลังโหลด…</p>
+                    <p role="status">กำลังโหลดสิทธิ์…</p>
+                ) : loadError ? (
+                    <div className="state-panel error-state" role="alert"><p>{loadError}</p><button className="secondary" onClick={() => { setLoading(true); setLoadError(""); setRevision((value) => value + 1); }}>ลองใหม่</button></div>
                 ) : (
                     <>
                         <label>
@@ -114,6 +122,7 @@ export function FolderAccess({ folderId, departmentId, api, onClose, onSaved, on
                                 </div>
                             </>
                         )}
+                        {saveError && <p className="field-error" role="alert">{saveError}</p>}
                         <div className="folder-access-actions">
                             <button className="secondary" disabled={busy} onClick={onClose}>
                                 ยกเลิก
@@ -125,6 +134,6 @@ export function FolderAccess({ folderId, departmentId, api, onClose, onSaved, on
                     </>
                 )}
             </section>
-        </div>
+        </DialogShell>
     );
 }
