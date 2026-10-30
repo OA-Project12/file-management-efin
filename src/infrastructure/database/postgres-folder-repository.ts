@@ -1,5 +1,7 @@
 import "server-only";
 import { getDatabasePool } from "@/infrastructure/database/pool";
+import { recordAudit } from "@/infrastructure/audit/record-audit";
+import type { AuthenticatedApplication } from "@/application/auth/authenticated-application";
 
 export interface FolderRecord {
     id: string;
@@ -56,8 +58,12 @@ export class PostgresFolderRepository {
         departmentId: string;
         parentFolderId: string | null;
         name: string;
+        auditActor: AuthenticatedApplication;
     }): Promise<FolderRecord | null> {
-        const result = await getDatabasePool().query<FolderRow>(
+        const client = await getDatabasePool().connect();
+        try {
+        await client.query("begin");
+        const result = await client.query<FolderRow>(
             `insert into filesvc.folders (tenant_id, application_id, department_id, parent_folder_id, name)
        select $1, $2, $3, $4, $5
        where $4::uuid is null or exists (
@@ -68,6 +74,9 @@ export class PostgresFolderRepository {
             [input.tenantId, input.applicationId, input.departmentId, input.parentFolderId, input.name],
         );
         const row = result.rows[0];
+        if (row) await recordAudit(input.auditActor, { action: "folder.create", outcome: "success", resourceType: "folder", resourceId: row.id,
+            details: { departmentId: row.department_id, parentFolderId: row.parent_folder_id, name: row.name } }, client);
+        await client.query("commit");
         return row
             ? {
                   id: row.id,
@@ -79,5 +88,7 @@ export class PostgresFolderRepository {
                   visibility: row.visibility,
               }
             : null;
+        } catch (error) { await client.query("rollback").catch(() => undefined); throw error; }
+        finally { client.release(); }
     }
 }

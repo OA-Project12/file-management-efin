@@ -1,3 +1,4 @@
+import { auditRoute } from "@/infrastructure/audit/audit-route";
 import { authenticateApplicationKey } from "@/infrastructure/auth/application-key-authenticator";
 import { canSeeFile } from "@/application/auth/folder-visibility";
 import { SupabaseObjectStorage } from "@/infrastructure/storage/supabase-object-storage";
@@ -16,7 +17,7 @@ function getMaxUploadSizeBytes(): number {
     return Number.isSafeInteger(configured) && configured > 0 ? configured : DEFAULT_MAX_UPLOAD_SIZE_BYTES;
 }
 
-export async function POST(request: Request, context: { params: Promise<{ fileId: string }> }): Promise<Response> {
+async function handlePOST(request: Request, context: { params: Promise<{ fileId: string }> }): Promise<Response> {
     try {
         const application = await authenticateApplicationKey(request);
         if (!application) return errorResponse("unauthorized", "A valid API key is required.", 401);
@@ -49,7 +50,7 @@ export async function POST(request: Request, context: { params: Promise<{ fileId
 
         const actualContentType = objectInfo.contentType ?? upload.contentType;
         if (objectInfo.sizeBytes > getMaxUploadSizeBytes()) {
-            await repository.quarantineUpload(fileId, application.tenantId, application.applicationId);
+            await repository.quarantineUpload(application, fileId, application.tenantId, application.applicationId);
             await objectStorage.deleteObject(upload.bucketId, upload.objectKey).catch((error) => {
                 console.error("Could not remove oversized uploaded object", {
                     message: error instanceof Error ? error.message : "Unknown storage error",
@@ -59,6 +60,7 @@ export async function POST(request: Request, context: { params: Promise<{ fileId
         }
 
         const completed = await repository.completeUpload(
+            application,
             fileId,
             application.tenantId,
             application.applicationId,
@@ -81,3 +83,5 @@ export async function POST(request: Request, context: { params: Promise<{ fileId
         return errorResponse("service_unavailable", "Could not complete the upload.", 503);
     }
 }
+
+export const POST = auditRoute("file.upload_complete", "file", handlePOST, { recordSuccess: false, signedUrl: false });

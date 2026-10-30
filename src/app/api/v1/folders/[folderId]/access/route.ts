@@ -1,12 +1,14 @@
+import { auditRoute } from "@/infrastructure/audit/audit-route";
 import { authenticateApplicationKey } from "@/infrastructure/auth/application-key-authenticator";
 import { getDatabasePool } from "@/infrastructure/database/pool";
+import { recordAudit } from "@/infrastructure/audit/record-audit";
 
 const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
 const fail = (code: string, message: string, status: number) =>
     Response.json({ error: { code, message } }, { status, headers: { "Cache-Control": "no-store" } });
 type Context = { params: Promise<{ folderId: string }> };
 
-export async function GET(request: Request, { params }: Context): Promise<Response> {
+async function handleGET(request: Request, { params }: Context): Promise<Response> {
     try {
         const app = await authenticateApplicationKey(request);
         if (!app) return fail("unauthorized", "A valid user session is required.", 401);
@@ -39,7 +41,7 @@ export async function GET(request: Request, { params }: Context): Promise<Respon
     }
 }
 
-export async function PATCH(request: Request, { params }: Context): Promise<Response> {
+async function handlePATCH(request: Request, { params }: Context): Promise<Response> {
     try {
         const app = await authenticateApplicationKey(request);
         if (!app) return fail("unauthorized", "A valid user session is required.", 401);
@@ -68,8 +70,8 @@ export async function PATCH(request: Request, { params }: Context): Promise<Resp
         const client = await getDatabasePool().connect();
         try {
             await client.query("begin");
-            const folder = await client.query<{ department_id: string; parent_folder_id: string | null }>(
-                `select department_id, parent_folder_id from filesvc.folders where id = $1 and tenant_id = $2 and application_id = $3 for update`,
+            const folder = await client.query<{ department_id: string; parent_folder_id: string | null; visibility: string }>(
+                `select department_id, parent_folder_id, visibility from filesvc.folders where id = $1 and tenant_id = $2 and application_id = $3 for update`,
                 [folderId, app.tenantId, app.applicationId],
             );
             const row = folder.rows[0];
@@ -77,6 +79,14 @@ export async function PATCH(request: Request, { params }: Context): Promise<Resp
                 await client.query("rollback");
                 return fail("folder_not_found", "Folder was not found.", 404);
             }
+            const previousAccess = await client.query<{ user_id: string }>(
+                `select user_id from filesvc.folder_user_access
+                 where tenant_id = $1 and application_id = $2 and folder_id = $3`,
+                [app.tenantId, app.applicationId, folderId],
+            );
+            const beforeUserCount = previousAccess.rowCount ?? 0;
+            const beforeUserIds = previousAccess.rows.map((access) => access.user_id).sort().join(",");
+            const afterUserIds = input.visibility === "restricted" ? [...userIds].sort().join(",") : "";
             if (userIds.length) {
                 const eligible = await client.query<{ user_id: string }>(
                     `select tu.user_id from filesvc.tenant_users tu
@@ -106,6 +116,10 @@ export async function PATCH(request: Request, { params }: Context): Promise<Resp
          select $1, $2, $3, $4, unnest($5::uuid[])`,
                     [app.tenantId, app.applicationId, row.department_id, folderId, userIds],
                 );
+            await recordAudit(app, { action: "folder.access_update", outcome: "success", resourceType: "folder", resourceId: folderId,
+                details: { beforeVisibility: row.visibility, afterVisibility: input.visibility,
+                    beforeUserCount, afterUserCount: input.visibility === "restricted" ? userIds.length : 0,
+                    beforeUserIds, afterUserIds } }, client);
             await client.query("commit");
             return Response.json(
                 { data: { folderId, visibility: input.visibility, userIds: input.visibility === "restricted" ? userIds : [] } },
@@ -122,3 +136,6 @@ export async function PATCH(request: Request, { params }: Context): Promise<Resp
         return fail("service_unavailable", "Could not update folder access.", 503);
     }
 }
+
+export const GET = auditRoute("folder.access_read", "folder", handleGET, { recordSuccess: false, signedUrl: false });
+export const PATCH = auditRoute("folder.access_update", "folder", handlePATCH, { recordSuccess: false, signedUrl: false });

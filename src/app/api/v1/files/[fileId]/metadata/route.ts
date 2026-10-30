@@ -1,4 +1,6 @@
+import { auditRoute } from "@/infrastructure/audit/audit-route";
 import { getDatabasePool } from "@/infrastructure/database/pool";
+import { recordAudit } from "@/infrastructure/audit/record-audit";
 import { authenticateApplicationKey } from "@/infrastructure/auth/application-key-authenticator";
 import { canSeeFile, canSeeFolder } from "@/application/auth/folder-visibility";
 import { departmentIdsForRole, hasDepartmentRole } from "@/application/auth/department-authorization";
@@ -8,7 +10,7 @@ function errorResponse(code: string, message: string, status: number): Response 
     return Response.json({ error: { code, message } }, { status, headers: { "Cache-Control": "no-store" } });
 }
 
-export async function PATCH(request: Request, { params }: { params: Promise<{ fileId: string }> }): Promise<Response> {
+async function handlePATCH(request: Request, { params }: { params: Promise<{ fileId: string }> }): Promise<Response> {
     try {
         const app = await authenticateApplicationKey(request);
         if (!app) return errorResponse("unauthorized", "A valid API key is required.", 401);
@@ -69,7 +71,14 @@ export async function PATCH(request: Request, { params }: { params: Promise<{ fi
                 400,
             );
 
-        const result = await getDatabasePool().query(
+        const client = await getDatabasePool().connect();
+        try {
+        await client.query("begin");
+        const before = await client.query<{ display_name: string; department_id: string; folder_id: string | null; tags: string[] }>(
+            `select display_name, department_id, folder_id, tags from filesvc.files where id = $1 and tenant_id = $2 and application_id = $3 for update`,
+            [fileId, app.tenantId, app.applicationId],
+        );
+        const result = await client.query(
             `update filesvc.files f
        set display_name = coalesce($5, f.display_name),
            department_id = case when $10::boolean then $11::uuid else f.department_id end,
@@ -101,10 +110,22 @@ export async function PATCH(request: Request, { params }: { params: Promise<{ fi
                 departmentId,
             ],
         );
-        if (!result.rows[0]) return errorResponse("file_or_folder_not_found", "File or target folder was not found.", 404);
+        if (!result.rows[0]) { await client.query("rollback"); return errorResponse("file_or_folder_not_found", "File or target folder was not found.", 404); }
+        const previous = before.rows[0];
+        const updated = result.rows[0] as { display_name: string; departmentId: string; folderId: string | null; tags: string[] };
+        await recordAudit(app, { action: "file.metadata_update", outcome: "success", resourceType: "file", resourceId: fileId,
+            details: { beforeDepartmentId: previous?.department_id ?? null, afterDepartmentId: updated.departmentId,
+                beforeFolderId: previous?.folder_id ?? null, afterFolderId: updated.folderId,
+                beforeDisplayName: previous?.display_name ?? null, afterDisplayName: updated.display_name,
+                beforeTagCount: previous?.tags?.length ?? 0, afterTagCount: updated.tags?.length ?? 0 } }, client);
+        await client.query("commit");
         return Response.json({ data: result.rows[0] }, { headers: { "Cache-Control": "no-store" } });
+        } catch (error) { await client.query("rollback").catch(() => undefined); throw error; }
+        finally { client.release(); }
     } catch (error) {
         console.error("Could not update file metadata", { message: error instanceof Error ? error.message : "Unknown error" });
         return errorResponse("service_unavailable", "Could not update file metadata.", 503);
     }
 }
+
+export const PATCH = auditRoute("file.metadata_update", "file", handlePATCH, { recordSuccess: false, signedUrl: false });

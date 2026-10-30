@@ -1,3 +1,4 @@
+import { auditRoute } from "@/infrastructure/audit/audit-route";
 import { RequestFileUpload } from "@/application/files/request-file-upload";
 import { departmentIdsForRole, hasDepartmentRole } from "@/application/auth/department-authorization";
 import { authenticateApplicationKey } from "@/infrastructure/auth/application-key-authenticator";
@@ -81,7 +82,7 @@ function validateFile(
     };
 }
 
-export async function POST(request: Request): Promise<Response> {
+async function handlePOST(request: Request): Promise<Response> {
     try {
         const application = await authenticateApplicationKey(request);
         if (!application) return errorResponse("unauthorized", "A valid API key is required.", 401);
@@ -123,6 +124,7 @@ export async function POST(request: Request): Promise<Response> {
             }
             try {
                 const upload = await useCase.execute({
+                    auditActor: application,
                     tenantId: application.tenantId,
                     applicationId: application.applicationId,
                     departmentId,
@@ -152,3 +154,5 @@ export async function POST(request: Request): Promise<Response> {
         return errorResponse("service_unavailable", "Could not create batch upload intents.", 503);
     }
 }
+
+export const POST = auditRoute("file.upload_batch", "file", handlePOST, { recordSuccess: false, signedUrl: false });

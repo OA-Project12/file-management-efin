@@ -1,3 +1,4 @@
+import { auditRoute } from "@/infrastructure/audit/audit-route";
 import { ListFiles } from "@/application/files/list-files";
 import type { FilePagePosition } from "@/application/files/ports/file-repository";
 import { authenticateApplicationKey } from "@/infrastructure/auth/application-key-authenticator";
@@ -90,7 +91,7 @@ function encodeCursor(position: FilePagePosition): string {
     ).toString("base64url");
 }
 
-export async function POST(request: Request): Promise<Response> {
+async function handlePOST(request: Request): Promise<Response> {
     try {
         const application = await authenticateApplicationKey(request);
         if (!application) return errorResponse("unauthorized", "A valid API key is required.", 401);
@@ -192,3 +193,5 @@ export async function POST(request: Request): Promise<Response> {
         return errorResponse("service_unavailable", "Could not list files.", 503);
     }
 }
+
+export const POST = auditRoute("file.search", "file", handlePOST, { recordSuccess: false, signedUrl: false });

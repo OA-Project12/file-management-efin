@@ -1,6 +1,7 @@
+import { auditRoute } from "@/infrastructure/audit/audit-route";
 import { authenticateApplicationKey } from "@/infrastructure/auth/application-key-authenticator";
 
-export async function GET(request: Request): Promise<Response> {
+async function handleGET(request: Request): Promise<Response> {
     try {
         const application = await authenticateApplicationKey(request);
 
@@ -42,3 +43,5 @@ export async function GET(request: Request): Promise<Response> {
         );
     }
 }
+
+export const GET = auditRoute("identity.read", "identity", handleGET, { recordSuccess: false, signedUrl: false });

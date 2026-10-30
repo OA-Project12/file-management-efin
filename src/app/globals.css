@@ -784,3 +784,4 @@ td {
 .folder-access-actions button {
    flex: 1
 }
+.audit-filters{display:flex;flex-wrap:wrap;gap:8px;margin-bottom:14px}.audit-filters input,.audit-filters select{border:1px solid var(--line);border-radius:7px;background:#fff;padding:8px;max-width:230px}.audit-filters label{display:flex;align-items:center;gap:5px;color:var(--muted)}.audit-more{margin-top:14px}.audit-panel td code{white-space:normal;overflow-wrap:anywhere}

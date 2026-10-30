@@ -1,6 +1,8 @@
+import { auditRoute } from "@/infrastructure/audit/audit-route";
 import { createClient } from "@supabase/supabase-js";
 import { authenticateApplicationKey } from "@/infrastructure/auth/application-key-authenticator";
 import { getDatabasePool } from "@/infrastructure/database/pool";
+import { recordAudit } from "@/infrastructure/audit/record-audit";
 
 const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
 const EMAIL = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
@@ -8,7 +10,7 @@ const fail = (code: string, message: string, status: number) =>
     Response.json({ error: { code, message } }, { status, headers: { "Cache-Control": "no-store" } });
 type Grant = { departmentId: string; role: "admin" | "editor" | "viewer" };
 
-export async function POST(request: Request): Promise<Response> {
+async function handlePOST(request: Request): Promise<Response> {
     try {
         const admin = await authenticateApplicationKey(request);
         if (!admin) return fail("unauthorized", "A valid user session is required.", 401);
@@ -61,6 +63,8 @@ export async function POST(request: Request): Promise<Response> {
                     [admin.tenantId, admin.applicationId, grant.departmentId, data.user.id, grant.role],
                 );
             }
+            await recordAudit(admin, { action: "user.invite", outcome: "success", resourceType: "user", resourceId: data.user.id,
+                details: { grantCount: grants.length, grants: grants.map((grant) => `${grant.departmentId}:${grant.role}`).sort().join(",") } }, client);
             await client.query("commit");
         } catch (dbError) {
             await client.query("rollback").catch(() => undefined);
@@ -78,3 +82,5 @@ export async function POST(request: Request): Promise<Response> {
         return fail("service_unavailable", "Could not invite user.", 503);
     }
 }
+
+export const POST = auditRoute("user.invite", "user", handlePOST, { recordSuccess: false, signedUrl: false });

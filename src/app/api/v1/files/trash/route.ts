@@ -1,3 +1,4 @@
+import { auditRoute } from "@/infrastructure/audit/audit-route";
 import { authenticateApplicationKey } from "@/infrastructure/auth/application-key-authenticator";
 import { accessibleDepartmentIds, hasDepartmentRole } from "@/application/auth/department-authorization";
 import { PostgresFileRepository } from "@/infrastructure/database/postgres-file-repository";
@@ -25,7 +26,7 @@ function decodeCursor(value: string | null): TrashPagePosition | null | undefine
     }
 }
 
-export async function GET(request: Request): Promise<Response> {
+async function handleGET(request: Request): Promise<Response> {
     await connection();
     try {
         const app = await authenticateApplicationKey(request);
@@ -76,3 +77,5 @@ export async function GET(request: Request): Promise<Response> {
         return fail("service_unavailable", "Could not list trash.", 503);
     }
 }
+
+export const GET = auditRoute("file.trash_list", "file", handleGET, { recordSuccess: false, signedUrl: false });

@@ -1,3 +1,4 @@
+import { auditRoute } from "@/infrastructure/audit/audit-route";
 import { RequestFileDeletion } from "@/application/files/request-file-deletion";
 import { authenticateApplicationKey } from "@/infrastructure/auth/application-key-authenticator";
 import { canSeeFile } from "@/application/auth/folder-visibility";
@@ -41,7 +42,7 @@ async function readRequestBody(request: Request): Promise<DeleteFileRequest | nu
     }
 }
 
-export async function POST(request: Request, context: { params: Promise<{ fileId: string }> }): Promise<Response> {
+async function handlePOST(request: Request, context: { params: Promise<{ fileId: string }> }): Promise<Response> {
     try {
         const application = await authenticateApplicationKey(request);
         if (!application) return errorResponse("unauthorized", "A valid API key is required.", 401);
@@ -70,6 +71,7 @@ export async function POST(request: Request, context: { params: Promise<{ fileId
 
         const useCase = new RequestFileDeletion(new PostgresFileRepository());
         const result = await useCase.execute(fileId, {
+      auditActor: application,
             tenantId: application.tenantId,
             applicationId: application.applicationId,
             ownerSubject,
@@ -92,3 +94,5 @@ export async function POST(request: Request, context: { params: Promise<{ fileId
         return errorResponse("service_unavailable", "Could not request file deletion.", 503);
     }
 }
+
+export const POST = auditRoute("file.trash", "file", handlePOST, { recordSuccess: false, signedUrl: false });

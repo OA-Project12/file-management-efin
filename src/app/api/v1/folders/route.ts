@@ -1,3 +1,4 @@
+import { auditRoute } from "@/infrastructure/audit/audit-route";
 import { authenticateApplicationKey } from "@/infrastructure/auth/application-key-authenticator";
 import { PostgresFolderRepository } from "@/infrastructure/database/postgres-folder-repository";
 import { hasDepartmentRole } from "@/application/auth/department-authorization";
@@ -35,7 +36,7 @@ async function readBody(request: Request): Promise<{ name?: unknown; parentFolde
     }
 }
 
-export async function GET(request: Request): Promise<Response> {
+async function handleGET(request: Request): Promise<Response> {
     try {
         const app = await authenticateApplicationKey(request);
         if (!app) return errorResponse("unauthorized", "A valid API key is required.", 401);
@@ -65,7 +66,7 @@ export async function GET(request: Request): Promise<Response> {
     }
 }
 
-export async function POST(request: Request): Promise<Response> {
+async function handlePOST(request: Request): Promise<Response> {
     try {
         const app = await authenticateApplicationKey(request);
         if (!app) return errorResponse("unauthorized", "A valid API key is required.", 401);
@@ -94,6 +95,7 @@ export async function POST(request: Request): Promise<Response> {
         if (parentFolderId && !(await canSeeFolder(app, departmentId, parentFolderId)))
             return errorResponse("parent_folder_not_found", "Parent folder was not found.", 404);
         const folder = await new PostgresFolderRepository().create({
+            auditActor: app,
             tenantId: app.tenantId,
             applicationId: app.applicationId,
             departmentId,
@@ -110,3 +112,6 @@ export async function POST(request: Request): Promise<Response> {
         return errorResponse("service_unavailable", "Could not create folder.", 503);
     }
 }
+
+export const GET = auditRoute("folder.list", "folder", handleGET, { recordSuccess: false, signedUrl: false });
+export const POST = auditRoute("folder.create", "folder", handlePOST, { recordSuccess: false, signedUrl: false });

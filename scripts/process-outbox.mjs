@@ -1,5 +1,6 @@
 import { createRequire } from "node:module";
 import process from "node:process";
+import { randomUUID } from "node:crypto";
 import { createClient } from "@supabase/supabase-js";
 
 const require = createRequire(import.meta.url);
@@ -147,6 +148,12 @@ async function finishEvent(event, file) {
         }
 
         await client.query(`update filesvc.outbox set processed_at = now() where id = $1 and processed_at is null`, [event.id]);
+        if (fileUpdate.rowCount === 1) await client.query(
+            `insert into filesvc.audit_log
+             (tenant_id, application_id, actor_kind, action, outcome, resource_type, resource_id, request_id, details)
+             values ($1, $2, 'worker', 'file.object_deleted', 'success', 'file', $3, $4, $5::jsonb)`,
+            [file.tenantId, file.applicationId, file.fileId, randomUUID(), JSON.stringify({ outboxId: event.id })],
+        );
         await client.query("commit");
     } catch (error) {
         await client.query("rollback").catch(() => undefined);
@@ -187,8 +194,33 @@ async function processEvent(event) {
 
 async function main() {
     console.log("Outbox worker started.");
+    let nextAuditMaintenance = 0;
     try {
         while (!stopping) {
+            if (Date.now() >= nextAuditMaintenance) {
+                try {
+                    const result = await pool.query("select filesvc.maintain_audit_retention() as result");
+                    console.log("Audit retention completed", result.rows[0]?.result);
+                    nextAuditMaintenance = Date.now() + 24 * 60 * 60 * 1000;
+                } catch (error) {
+                    const message = error instanceof Error ? error.message : "Unknown error";
+                    console.error("Audit retention failed; operator attention required", { message });
+                    if (process.env.AUDIT_ALERT_WEBHOOK_URL) {
+                        try {
+                            const alert = await fetch(process.env.AUDIT_ALERT_WEBHOOK_URL, {
+                                method: "POST",
+                                headers: { "Content-Type": "application/json" },
+                                body: JSON.stringify({ event: "audit_retention_failed", service: "file-management-efin", occurredAt: new Date().toISOString() }),
+                                signal: AbortSignal.timeout(5000),
+                            });
+                            if (!alert.ok) console.error("Audit alert delivery failed", { status: alert.status });
+                        } catch (alertError) {
+                            console.error("Audit alert delivery failed", { message: alertError instanceof Error ? alertError.message : "Unknown error" });
+                        }
+                    }
+                    nextAuditMaintenance = Date.now() + 60 * 60 * 1000;
+                }
+            }
             let processed = 0;
             for (let index = 0; index < BATCH_SIZE && !stopping; index += 1) {
                 const event = await claimEvent();

@@ -1,3 +1,4 @@
+import { auditRoute } from "@/infrastructure/audit/audit-route";
 import { CreateFileDownloadGrant } from "@/application/files/create-file-download-grant";
 import { authenticateApplicationKey } from "@/infrastructure/auth/application-key-authenticator";
 import { canSeeFile } from "@/application/auth/folder-visibility";
@@ -40,7 +41,7 @@ async function readRequestBody(request: Request): Promise<DownloadUrlRequest | n
     }
 }
 
-export async function POST(request: Request, context: { params: Promise<{ fileId: string }> }): Promise<Response> {
+async function handlePOST(request: Request, context: { params: Promise<{ fileId: string }> }): Promise<Response> {
     try {
         const application = await authenticateApplicationKey(request);
         if (!application) return errorResponse("unauthorized", "A valid API key is required.", 401);
@@ -81,3 +82,5 @@ export async function POST(request: Request, context: { params: Promise<{ fileId
         return errorResponse("service_unavailable", "Could not create a download URL.", 503);
     }
 }
+
+export const POST = auditRoute("file.download_url", "file", handlePOST, { recordSuccess: true, signedUrl: true });

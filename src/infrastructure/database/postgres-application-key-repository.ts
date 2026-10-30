@@ -1,47 +1,53 @@
 import "server-only";
 import type { QueryResultRow } from "pg";
-import type { DepartmentGrant } from "@/application/auth/authenticated-application";
+import type { AuthenticatedApplication, DepartmentGrant } from "@/application/auth/authenticated-application";
 import { getDatabasePool } from "@/infrastructure/database/pool";
+import { recordAudit } from "@/infrastructure/audit/record-audit";
 
 export interface ApplicationKeyRecord {
-  id: string;
-  keyPrefix: string;
-  scopes: string[];
-  createdAt: Date;
-  expiresAt: Date | null;
-  revokedAt: Date | null;
-  lastUsedAt: Date | null;
-  departmentGrants: Array<Pick<DepartmentGrant, "id" | "code" | "name" | "role">>;
+    id: string;
+    keyPrefix: string;
+    scopes: string[];
+    createdAt: Date;
+    expiresAt: Date | null;
+    revokedAt: Date | null;
+    lastUsedAt: Date | null;
+    departmentGrants: Array<Pick<DepartmentGrant, "id" | "code" | "name" | "role">>;
 }
 
 interface ApplicationKeyRow extends QueryResultRow {
-  id: string;
-  key_prefix: string;
-  scopes: string[];
-  created_at: Date;
-  expires_at: Date | null;
-  revoked_at: Date | null;
-  last_used_at: Date | null;
-  department_grants: ApplicationKeyRecord["departmentGrants"] | null;
+    id: string;
+    key_prefix: string;
+    scopes: string[];
+    created_at: Date;
+    expires_at: Date | null;
+    revoked_at: Date | null;
+    last_used_at: Date | null;
+    department_grants: ApplicationKeyRecord["departmentGrants"] | null;
 }
 
 function mapKey(row: ApplicationKeyRow): ApplicationKeyRecord {
-  return {
-    id: row.id,
-    keyPrefix: row.key_prefix,
-    scopes: row.scopes,
-    createdAt: row.created_at,
-    expiresAt: row.expires_at,
-    revokedAt: row.revoked_at,
-    lastUsedAt: row.last_used_at,
-    departmentGrants: row.department_grants ?? [],
-  };
+    return {
+        id: row.id,
+        keyPrefix: row.key_prefix,
+        scopes: row.scopes,
+        createdAt: row.created_at,
+        expiresAt: row.expires_at,
+        revokedAt: row.revoked_at,
+        lastUsedAt: row.last_used_at,
+        departmentGrants: row.department_grants ?? [],
+    };
 }
 
 export class PostgresApplicationKeyRepository {
-  async listForApplication(tenantId: string, applicationId: string, departmentIds: string[], isApplicationAdmin: boolean): Promise<ApplicationKeyRecord[]> {
-    const result = await getDatabasePool().query<ApplicationKeyRow>(
-      `
+    async listForApplication(
+        tenantId: string,
+        applicationId: string,
+        departmentIds: string[],
+        isApplicationAdmin: boolean,
+    ): Promise<ApplicationKeyRecord[]> {
+        const result = await getDatabasePool().query<ApplicationKeyRow>(
+            `
         select k.id, k.key_prefix, k.scopes, k.created_at, k.expires_at, k.revoked_at, k.last_used_at,
                coalesce(jsonb_agg(jsonb_build_object(
                  'id', d.id, 'code', d.code, 'name', d.name, 'role', kd.role
@@ -65,26 +71,27 @@ export class PostgresApplicationKeyRepository {
         group by k.id
         order by k.created_at desc, k.id desc
       `,
-      [tenantId, applicationId, departmentIds, isApplicationAdmin],
-    );
+            [tenantId, applicationId, departmentIds, isApplicationAdmin],
+        );
 
-    return result.rows.map(mapKey);
-  }
+        return result.rows.map(mapKey);
+    }
 
-  async createForApplication(input: {
-    tenantId: string;
-    applicationId: string;
-    keyPrefix: string;
-    secretHash: Buffer;
-    scopes: string[];
-    expiresInDays: number;
-    departmentGrants: Array<Pick<DepartmentGrant, "id" | "code" | "name" | "role">>;
-  }): Promise<ApplicationKeyRecord | null> {
-    const client = await getDatabasePool().connect();
-    try {
-      await client.query("begin");
-      const result = await client.query<ApplicationKeyRow>(
-        `
+    async createForApplication(input: {
+        auditActor: AuthenticatedApplication;
+        tenantId: string;
+        applicationId: string;
+        keyPrefix: string;
+        secretHash: Buffer;
+        scopes: string[];
+        expiresInDays: number;
+        departmentGrants: Array<Pick<DepartmentGrant, "id" | "code" | "name" | "role">>;
+    }): Promise<ApplicationKeyRecord | null> {
+        const client = await getDatabasePool().connect();
+        try {
+            await client.query("begin");
+            const result = await client.query<ApplicationKeyRow>(
+                `
         insert into filesvc.application_keys (
           tenant_id, application_id, key_prefix, secret_hash, scopes, expires_at
         )
@@ -96,48 +103,63 @@ export class PostgresApplicationKeyRepository {
         returning id, key_prefix, scopes, created_at, expires_at, revoked_at, last_used_at,
                   '[]'::jsonb as department_grants
       `,
-      [
-        input.tenantId,
-        input.applicationId,
-        input.keyPrefix,
-        input.secretHash,
-        input.scopes,
-        input.expiresInDays,
-      ],
-      );
-      const row = result.rows[0];
-      if (!row) {
-        await client.query("rollback");
-        return null;
-      }
-      for (const grant of input.departmentGrants) {
-        const grantResult = await client.query(
-          `insert into filesvc.application_key_departments (application_key_id, department_id, role)
+                [input.tenantId, input.applicationId, input.keyPrefix, input.secretHash, input.scopes, input.expiresInDays],
+            );
+            const row = result.rows[0];
+            if (!row) {
+                await client.query("rollback");
+                return null;
+            }
+            for (const grant of input.departmentGrants) {
+                const grantResult = await client.query(
+                    `insert into filesvc.application_key_departments (application_key_id, department_id, role)
            select $1, d.id, $3 from filesvc.departments d
            where d.id = $2 and d.tenant_id = $4 and d.application_id = $5 and d.status = 'active'`,
-          [row.id, grant.id, grant.role, input.tenantId, input.applicationId],
-        );
-        if (grantResult.rowCount !== 1) throw new Error("Department grant could not be assigned.");
-      }
-      await client.query("commit");
-      return { ...mapKey(row), departmentGrants: input.departmentGrants };
-    } catch (error) {
-      await client.query("rollback").catch(() => undefined);
-      throw error;
-    } finally {
-      client.release();
+                    [row.id, grant.id, grant.role, input.tenantId, input.applicationId],
+                );
+                if (grantResult.rowCount !== 1) throw new Error("Department grant could not be assigned.");
+            }
+            await recordAudit(
+                input.auditActor,
+                {
+                    action: "key.create",
+                    outcome: "success",
+                    resourceType: "api_key",
+                    resourceId: row.id,
+                    details: {
+                        grantCount: input.departmentGrants.length,
+                        grants: input.departmentGrants
+                            .map((grant) => `${grant.id}:${grant.role}`)
+                            .sort()
+                            .join(","),
+                        expiresInDays: input.expiresInDays,
+                    },
+                },
+                client,
+            );
+            await client.query("commit");
+            return { ...mapKey(row), departmentGrants: input.departmentGrants };
+        } catch (error) {
+            await client.query("rollback").catch(() => undefined);
+            throw error;
+        } finally {
+            client.release();
+        }
     }
-  }
 
-  async revokeForApplication(
-    tenantId: string,
-    applicationId: string,
-    keyId: string,
-    departmentIds: string[],
-    isApplicationAdmin: boolean,
-  ): Promise<ApplicationKeyRecord | null> {
-    const result = await getDatabasePool().query<ApplicationKeyRow>(
-      `
+    async revokeForApplication(
+        auditActor: AuthenticatedApplication,
+        tenantId: string,
+        applicationId: string,
+        keyId: string,
+        departmentIds: string[],
+        isApplicationAdmin: boolean,
+    ): Promise<ApplicationKeyRecord | null> {
+        const client = await getDatabasePool().connect();
+        try {
+            await client.query("begin");
+            const result = await client.query<ApplicationKeyRow>(
+                `
         update filesvc.application_keys
         set revoked_at = coalesce(revoked_at, now())
         where tenant_id = $1 and application_id = $2 and id = $3
@@ -156,9 +178,22 @@ export class PostgresApplicationKeyRepository {
           )
         returning id, key_prefix, scopes, created_at, expires_at, revoked_at, last_used_at
       `,
-      [tenantId, applicationId, keyId, departmentIds, isApplicationAdmin],
-    );
+                [tenantId, applicationId, keyId, departmentIds, isApplicationAdmin],
+            );
 
-    return result.rows[0] ? mapKey(result.rows[0]) : null;
-  }
+            if (result.rows[0])
+                await recordAudit(
+                    auditActor,
+                    { action: "key.revoke", outcome: "success", resourceType: "api_key", resourceId: keyId },
+                    client,
+                );
+            await client.query("commit");
+            return result.rows[0] ? mapKey(result.rows[0]) : null;
+        } catch (error) {
+            await client.query("rollback").catch(() => undefined);
+            throw error;
+        } finally {
+            client.release();
+        }
+    }
 }

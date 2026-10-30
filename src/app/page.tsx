@@ -5,6 +5,7 @@ import { getBrowserAuth } from "@/lib/browser-auth";
 import { useRouter } from "next/navigation";
 import { AdminUsers } from "./admin-users";
 import { FolderAccess } from "./folder-access";
+import { AuditTrail } from "./audit-trail";
 
 type FileRow = {
     id: string;
@@ -30,7 +31,7 @@ type KeyRow = {
     revokedAt: string | null;
     lastUsedAt: string | null;
 };
-type Tab = "files" | "trash" | "keys" | "users";
+type Tab = "files" | "trash" | "keys" | "users" | "audit";
 type UploadResult = { name: string; status: "pending" | "uploading" | "completed" | "error"; message?: string };
 type BatchIntent = { index: number; status: "ready" | "error"; fileId?: string; signedUrl?: string; error?: { message: string } };
 
@@ -53,6 +54,7 @@ export default function Home() {
     const [email, setEmail] = useState("");
     const [password, setPassword] = useState("");
     const [connected, setConnected] = useState(false);
+    const [restoringSession, setRestoringSession] = useState(true);
     const [scopes, setScopes] = useState<string[]>([]);
     const [isTenantAdmin, setIsTenantAdmin] = useState(false);
     const [usersRevision, setUsersRevision] = useState(0);
@@ -191,11 +193,11 @@ export default function Home() {
             setOwner(identity.userId);
             setScopes(identity.scopes ?? []);
             setIsTenantAdmin(Boolean(identity.isTenantAdmin));
-            setConnected(true);
             const available = await loadDepartments();
             const initialDepartmentId = available[0]?.id ?? "";
             setDepartmentId(initialDepartmentId);
             await Promise.all([loadFolders("", initialDepartmentId), search("", initialDepartmentId)]);
+            setConnected(true);
         } catch (error) {
             setNotice(errorText(error));
         } finally {
@@ -213,18 +215,24 @@ export default function Home() {
         getBrowserAuth().auth.getSession().then(async ({ data: { session } }) => {
             if (!session || !active) return;
             const response = await fetch("/api/v1/me", { headers: { Authorization: `Bearer ${session.access_token}` } });
-            if (!response.ok || !active) return;
+            if (!response.ok) {
+                const body = await response.json().catch(() => null);
+                throw new Error(body?.error?.message ?? `ตรวจสิทธิ์ไม่สำเร็จ (${response.status})`);
+            }
             const identity = await response.json();
+            const result = await api("/departments");
             if (!active) return;
             setOwner(identity.userId);
             setScopes(identity.scopes ?? []);
             setIsTenantAdmin(Boolean(identity.isTenantAdmin));
+            setDepartments(result.data.items);
+            setDepartmentId(result.data.items[0]?.id ?? "");
             setConnected(true);
-            const departments = await api("/departments");
-            if (!active) return;
-            setDepartments(departments.data.items);
-            setDepartmentId(departments.data.items[0]?.id ?? "");
-        }).catch(() => undefined);
+        }).catch((error) => {
+            if (active) setNotice(`กู้คืนการเข้าสู่ระบบไม่สำเร็จ: ${errorText(error)}`);
+        }).finally(() => {
+            if (active) setRestoringSession(false);
+        });
         return () => { active = false; };
     }, [connected, api, router]);
 
@@ -458,6 +466,9 @@ export default function Home() {
     const canEditDepartment = selectedDepartment?.role === "admin" || selectedDepartment?.role === "editor";
     const canAdminDepartment = selectedDepartment?.role === "admin";
 
+    if (!connected && restoringSession)
+        return <main className="login"><p>กำลังตรวจสอบการเข้าสู่ระบบ…</p></main>;
+
     if (!connected)
         return (
             <main className="login">
@@ -505,6 +516,7 @@ export default function Home() {
                 </div>
                 {isTenantAdmin && <button className="nav" onClick={() => void inviteUser()}>＋ เชิญผู้ใช้</button>}
                 {isTenantAdmin && <button className={tab === "users" ? "nav active" : "nav"} onClick={() => setTab("users")}>♙　จัดการผู้ใช้</button>}
+                {isTenantAdmin && <button className={tab === "audit" ? "nav active" : "nav"} onClick={() => setTab("audit")}>◷　ประวัติการใช้งาน</button>}
                 <div className="caption">WORKSPACE</div>
                 <div className="workspace">◈　Company files　⌄</div>
                 <button className={tab === "files" ? "nav active" : "nav"} onClick={() => setTab("files")}>
@@ -552,7 +564,7 @@ export default function Home() {
                     </button>
                 ))}
                 <div className="side-bottom">
-                    <i /> {selectedDepartment?.role ?? "ไม่มีสิทธิ์"}{" "}
+                    <i /> {selectedDepartment?.role ?? (isTenantAdmin ? "ยังไม่มีหน่วยงาน" : "ยังไม่มีสิทธิ์เข้าคลัง")}{" "}
                     <button onClick={() => void logout()}>
                         ออก
                     </button>
@@ -562,7 +574,7 @@ export default function Home() {
                 <header className="topbar">
                     <span>
                         Workspace　/　{selectedDepartment?.name ?? "คลังหน่วยงาน"}　/　
-                        {tab === "files" ? (folderId ? "โฟลเดอร์" : "เอกสารทั้งหมด") : tab === "trash" ? "ถังขยะ" : tab === "users" ? "จัดการผู้ใช้" : "API keys"}
+                        {tab === "files" ? (folderId ? "โฟลเดอร์" : "เอกสารทั้งหมด") : tab === "trash" ? "ถังขยะ" : tab === "users" ? "จัดการผู้ใช้" : tab === "audit" ? "ประวัติการใช้งาน" : "API keys"}
                     </span>
                     <button className="quiet" onClick={() => void Promise.all([loadDepartments(), loadFolders(), search(), loadTrash()])}>
                         ↻　Refresh
@@ -796,6 +808,8 @@ export default function Home() {
                     </>
                 ) : tab === "users" ? (
                     <AdminUsers key={usersRevision} api={api} departments={departments} onNotice={setNotice} />
+                ) : tab === "audit" ? (
+                    <AuditTrail api={api} onNotice={setNotice} />
                 ) : (
                     <>
                         <div className="heading">

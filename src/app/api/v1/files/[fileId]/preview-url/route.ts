@@ -1,3 +1,4 @@
+import { auditRoute } from "@/infrastructure/audit/audit-route";
 import { authenticateApplicationKey } from "@/infrastructure/auth/application-key-authenticator";
 import { canSeeFile } from "@/application/auth/folder-visibility";
 import { PostgresFileRepository } from "@/infrastructure/database/postgres-file-repository";
@@ -12,7 +13,7 @@ function errorResponse(code: string, message: string, status: number): Response 
     return Response.json({ error: { code, message } }, { status, headers: { "Cache-Control": "no-store" } });
 }
 
-export async function POST(request: Request, context: { params: Promise<{ fileId: string }> }): Promise<Response> {
+async function handlePOST(request: Request, context: { params: Promise<{ fileId: string }> }): Promise<Response> {
     try {
         const application = await authenticateApplicationKey(request);
         if (!application) return errorResponse("unauthorized", "A valid API key is required.", 401);
@@ -73,3 +74,5 @@ export async function POST(request: Request, context: { params: Promise<{ fileId
         return errorResponse("service_unavailable", "Could not create a preview URL.", 503);
     }
 }
+
+export const POST = auditRoute("file.preview_url", "file", handlePOST, { recordSuccess: true, signedUrl: true });

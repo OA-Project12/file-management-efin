@@ -1,3 +1,4 @@
+import { auditRoute } from "@/infrastructure/audit/audit-route";
 import { RequestFileUpload } from "@/application/files/request-file-upload";
 import { authenticateApplicationKey } from "@/infrastructure/auth/application-key-authenticator";
 import { SupabaseObjectStorage } from "@/infrastructure/storage/supabase-object-storage";
@@ -54,7 +55,7 @@ async function readJsonBody(request: Request): Promise<UploadIntentRequest | nul
     }
 }
 
-export async function POST(request: Request): Promise<Response> {
+async function handlePOST(request: Request): Promise<Response> {
     try {
         const application = await authenticateApplicationKey(request);
         if (!application) {
@@ -123,6 +124,7 @@ export async function POST(request: Request): Promise<Response> {
 
         const useCase = new RequestFileUpload(new PostgresUploadIntentRepository(), new SupabaseObjectStorage());
         const upload = await useCase.execute({
+            auditActor: application,
             tenantId: application.tenantId,
             applicationId: application.applicationId,
             departmentId,
@@ -144,3 +146,5 @@ export async function POST(request: Request): Promise<Response> {
         return errorResponse("service_unavailable", "Could not create an upload intent.", 503);
     }
 }
+
+export const POST = auditRoute("file.upload_intent", "file", handlePOST, { recordSuccess: false, signedUrl: false });

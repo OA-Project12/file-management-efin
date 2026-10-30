@@ -1,3 +1,4 @@
+import { auditRoute } from "@/infrastructure/audit/audit-route";
 import { createClient } from "@supabase/supabase-js";
 import { authenticateApplicationKey } from "@/infrastructure/auth/application-key-authenticator";
 import { getDatabasePool } from "@/infrastructure/database/pool";
@@ -5,7 +6,7 @@ import { getDatabasePool } from "@/infrastructure/database/pool";
 const fail = (code: string, message: string, status: number) =>
     Response.json({ error: { code, message } }, { status, headers: { "Cache-Control": "no-store" } });
 
-export async function GET(request: Request): Promise<Response> {
+async function handleGET(request: Request): Promise<Response> {
     try {
         const admin = await authenticateApplicationKey(request);
         if (!admin) return fail("unauthorized", "A valid user session is required.", 401);
@@ -79,3 +80,5 @@ export async function GET(request: Request): Promise<Response> {
         return fail("service_unavailable", "Could not list users.", 503);
     }
 }
+
+export const GET = auditRoute("user.list", "user", handleGET, { recordSuccess: false, signedUrl: false });

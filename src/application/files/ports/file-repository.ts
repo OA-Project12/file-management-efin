@@ -1,6 +1,7 @@
 import type { FileRecord } from "@/domain/files/file-record";
 
 export interface FileScope {
+  auditActor?: import("@/application/auth/authenticated-application").AuthenticatedApplication;
     tenantId: string;
     applicationId: string;
     ownerSubject: string | null;

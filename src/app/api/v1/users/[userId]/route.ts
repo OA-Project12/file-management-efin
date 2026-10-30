@@ -1,12 +1,14 @@
+import { auditRoute } from "@/infrastructure/audit/audit-route";
 import { authenticateApplicationKey } from "@/infrastructure/auth/application-key-authenticator";
 import { getDatabasePool } from "@/infrastructure/database/pool";
+import { recordAudit } from "@/infrastructure/audit/record-audit";
 
 const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
 const fail = (code: string, message: string, status: number) =>
     Response.json({ error: { code, message } }, { status, headers: { "Cache-Control": "no-store" } });
 type Grant = { departmentId: string; role: "admin" | "editor" | "viewer" };
 
-export async function PATCH(request: Request, { params }: { params: Promise<{ userId: string }> }): Promise<Response> {
+async function handlePATCH(request: Request, { params }: { params: Promise<{ userId: string }> }): Promise<Response> {
     try {
         const admin = await authenticateApplicationKey(request);
         if (!admin) return fail("unauthorized", "A valid user session is required.", 401);
@@ -42,8 +44,8 @@ export async function PATCH(request: Request, { params }: { params: Promise<{ us
         const client = await getDatabasePool().connect();
         try {
             await client.query("begin");
-            const member = await client.query<{ is_admin: boolean }>(
-                `select is_admin from filesvc.tenant_users where tenant_id = $1 and user_id = $2 for update`,
+            const member = await client.query<{ is_admin: boolean; status: string }>(
+                `select is_admin, status from filesvc.tenant_users where tenant_id = $1 and user_id = $2 for update`,
                 [admin.tenantId, userId],
             );
             if (!member.rows[0]) {
@@ -54,6 +56,14 @@ export async function PATCH(request: Request, { params }: { params: Promise<{ us
                 await client.query("rollback");
                 return fail("admin_protected", "Tenant Admin must be managed separately.", 409);
             }
+            const previousGrants = await client.query<{ department_id: string; role: string }>(
+                `select department_id, role from filesvc.user_department_roles
+                 where tenant_id = $1 and application_id = $2 and user_id = $3`,
+                [admin.tenantId, admin.applicationId, userId],
+            );
+            const beforeGrantCount = previousGrants.rowCount ?? 0;
+            const beforeGrants = previousGrants.rows.map((grant) => `${grant.department_id}:${grant.role}`).sort().join(",");
+            const afterGrants = grants === undefined ? beforeGrants : grants.map((grant) => `${grant.departmentId}:${grant.role}`).sort().join(",");
             if (status !== undefined)
                 await client.query(`update filesvc.tenant_users set status = $3 where tenant_id = $1 and user_id = $2`, [
                     admin.tenantId,
@@ -72,6 +82,9 @@ export async function PATCH(request: Request, { params }: { params: Promise<{ us
                         [admin.tenantId, admin.applicationId, grant.departmentId, userId, grant.role],
                     );
             }
+            await recordAudit(admin, { action: "user.access_update", outcome: "success", resourceType: "user", resourceId: userId,
+                details: { beforeStatus: member.rows[0].status, afterStatus: typeof status === "string" ? status : member.rows[0].status,
+                    beforeGrantCount, afterGrantCount: grants?.length ?? beforeGrantCount, beforeGrants, afterGrants } }, client);
             await client.query("commit");
         } catch (error) {
             await client.query("rollback").catch(() => undefined);
@@ -88,3 +101,5 @@ export async function PATCH(request: Request, { params }: { params: Promise<{ us
         return fail("service_unavailable", "Could not update user access.", 503);
     }
 }
+
+export const PATCH = auditRoute("user.access_update", "user", handlePATCH, { recordSuccess: false, signedUrl: false });

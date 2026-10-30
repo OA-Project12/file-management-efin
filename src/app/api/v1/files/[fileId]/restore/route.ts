@@ -1,3 +1,4 @@
+import { auditRoute } from "@/infrastructure/audit/audit-route";
 import { authenticateApplicationKey } from "@/infrastructure/auth/application-key-authenticator";
 import { canSeeFile } from "@/application/auth/folder-visibility";
 import { departmentIdsForRole } from "@/application/auth/department-authorization";
@@ -8,7 +9,7 @@ const UUID_PATTERN = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3
 const fail = (code: string, message: string, status: number) =>
     Response.json({ error: { code, message } }, { status, headers: { "Cache-Control": "no-store" } });
 
-export async function POST(request: Request, { params }: { params: Promise<{ fileId: string }> }): Promise<Response> {
+async function handlePOST(request: Request, { params }: { params: Promise<{ fileId: string }> }): Promise<Response> {
     try {
         const app = await authenticateApplicationKey(request);
         if (!app) return fail("unauthorized", "A valid API key is required.", 401);
@@ -29,6 +30,7 @@ export async function POST(request: Request, { params }: { params: Promise<{ fil
         if (!app.userId && (!ownerSubject || ownerSubject.length > 255))
             return fail("invalid_owner_subject", "ownerSubject must contain 1 to 255 characters.", 400);
         const scope = {
+            auditActor: app,
             tenantId: app.tenantId,
             applicationId: app.applicationId,
             ownerSubject,
@@ -47,3 +49,5 @@ export async function POST(request: Request, { params }: { params: Promise<{ fil
         return fail("service_unavailable", "Could not restore file.", 503);
     }
 }
+
+export const POST = auditRoute("file.restore", "file", handlePOST, { recordSuccess: false, signedUrl: false });

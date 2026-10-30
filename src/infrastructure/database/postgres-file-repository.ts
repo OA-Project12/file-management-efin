@@ -12,6 +12,7 @@ import type {
     TrashedObject,
 } from "@/application/files/ports/file-repository";
 import { getDatabasePool } from "@/infrastructure/database/pool";
+import { recordAudit } from "@/infrastructure/audit/record-audit";
 
 interface FileRow {
     id: string;
@@ -148,7 +149,10 @@ export class PostgresFileRepository implements FileRepository {
     }
 
     async requestDelete(fileId: string, scope: FileScope): Promise<FileDeletionRequestResult> {
-        const result = await this.pool.query<DeletableFileRow>(
+        const client = await this.pool.connect();
+        try {
+        await client.query("begin");
+        const result = await client.query<DeletableFileRow>(
             `
           select id, status, trashed_at
           from filesvc.files
@@ -162,18 +166,23 @@ export class PostgresFileRepository implements FileRepository {
         );
 
         const file = result.rows[0];
-        if (!file) return "not_found";
-        if (file.status === "deleted") return file.trashed_at ? "already_deleted" : "not_deletable";
-        if (file.status !== "available") return "not_deletable";
+        if (!file) { await client.query("rollback"); return "not_found"; }
+        if (file.status === "deleted") { await client.query("rollback"); return file.trashed_at ? "already_deleted" : "not_deletable"; }
+        if (file.status !== "available") { await client.query("rollback"); return "not_deletable"; }
 
-        const updated = await this.pool.query(
+        const updated = await client.query(
             `update filesvc.files set status = 'deleted', deleted_at = now(), trashed_at = now(), updated_at = now()
        where id = $1 and tenant_id = $2 and application_id = $3 and ($4::text is null or owner_subject = $4)
          and department_id = any($5::uuid[]) and status = 'available'
        returning id`,
             [fileId, scope.tenantId, scope.applicationId, scope.ownerSubject, scope.departmentIds],
         );
+        if (updated.rowCount && scope.auditActor) await recordAudit(scope.auditActor,
+            { action: "file.trash", outcome: "success", resourceType: "file", resourceId: fileId, details: { beforeStatus: "available", afterStatus: "deleted" } }, client);
+        await client.query("commit");
         return updated.rowCount ? "trashed" : "not_deletable";
+        } catch (error) { await client.query("rollback").catch(() => undefined); throw error; }
+        finally { client.release(); }
     }
 
     async listTrash(scope: FileScope, limit: number, before?: TrashPagePosition, departmentId?: string): Promise<FileListItem[]> {
@@ -230,14 +239,22 @@ export class PostgresFileRepository implements FileRepository {
     }
 
     async restore(fileId: string, scope: FileScope): Promise<"restored" | "not_found"> {
-        const result = await this.pool.query(
+        const client = await this.pool.connect();
+        try {
+        await client.query("begin");
+        const result = await client.query(
             `update filesvc.files set status = 'available', deleted_at = null, trashed_at = null, updated_at = now()
        where id = $1 and tenant_id = $2 and application_id = $3 and ($4::text is null or owner_subject = $4)
          and department_id = any($5::uuid[]) and status = 'deleted' and trashed_at is not null
        returning id`,
             [fileId, scope.tenantId, scope.applicationId, scope.ownerSubject, scope.departmentIds],
         );
+        if (result.rowCount && scope.auditActor) await recordAudit(scope.auditActor,
+            { action: "file.restore", outcome: "success", resourceType: "file", resourceId: fileId, details: { beforeStatus: "deleted", afterStatus: "available" } }, client);
+        await client.query("commit");
         return result.rowCount ? "restored" : "not_found";
+        } catch (error) { await client.query("rollback").catch(() => undefined); throw error; }
+        finally { client.release(); }
     }
 
     async requestPurge(fileId: string, scope: FileScope): Promise<"queued" | "not_found"> {
@@ -273,6 +290,8 @@ export class PostgresFileRepository implements FileRepository {
                     }),
                 ],
             );
+            if (scope.auditActor) await recordAudit(scope.auditActor,
+                { action: "file.purge_requested", outcome: "success", resourceType: "file", resourceId: fileId }, client);
             await client.query("commit");
             return "queued";
         } catch (error) {
