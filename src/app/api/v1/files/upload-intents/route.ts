@@ -1,5 +1,6 @@
 import { auditRoute } from "@/infrastructure/audit/audit-route";
 import { RequestFileUpload } from "@/application/files/request-file-upload";
+import { storageQuotaErrorResponse } from "@/infrastructure/http/storage-quota-errors";
 import { authenticateApplicationKey } from "@/infrastructure/auth/application-key-authenticator";
 import { SupabaseObjectStorage } from "@/infrastructure/storage/supabase-object-storage";
 import { PostgresUploadIntentRepository } from "@/infrastructure/database/postgres-upload-intent-repository";
@@ -137,6 +138,8 @@ async function handlePOST(request: Request): Promise<Response> {
 
         return Response.json({ data: upload }, { status: 201, headers: { "Cache-Control": "no-store" } });
     } catch (error) {
+        const quota=storageQuotaErrorResponse(error);
+        if(quota) return quota;
         const serviceError = error as { code?: string; message?: string };
         console.error("Could not create upload intent", {
             code: serviceError.code,

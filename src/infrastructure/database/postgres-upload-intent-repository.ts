@@ -9,6 +9,8 @@ import type {
 import { getDatabasePool } from "@/infrastructure/database/pool";
 import { recordAudit } from "@/infrastructure/audit/record-audit";
 import type { AuthenticatedApplication } from "@/application/auth/authenticated-application";
+import { reserveStorage,settleStorage } from "./storage-quota-accounting";
+import type { UploadQuotaRejection } from "@/domain/storage/department-quota";
 
 interface UploadIntentRow {
     file_id: string;
@@ -66,6 +68,8 @@ export class PostgresUploadIntentRepository implements UploadIntentRepository {
                 [input.fileId, input.tokenFingerprint, input.expiresInSeconds],
             );
 
+            await reserveStorage(client,input.auditActor,{fileId:input.fileId,bucketId:input.bucketId,objectKey:input.objectKey,
+                kind:"initial_upload",expectedBytes:input.sizeBytes,expiresAt:intentResult.rows[0].expires_at});
             await recordAudit(
                 input.auditActor,
                 {
@@ -126,10 +130,15 @@ export class PostgresUploadIntentRepository implements UploadIntentRepository {
         departmentIds: string[],
         actualSizeBytes: number,
         actualContentType: string,
-    ): Promise<boolean> {
+    ): Promise<boolean | UploadQuotaRejection> {
         const client = await this.pool.connect();
         try {
             await client.query("begin");
+            // Match the cleanup/version paths: lock the document before its intent.
+            await client.query(
+                `select id from filesvc.files where id=$1 and tenant_id=$2 and application_id=$3 for update`,
+                [fileId,tenantId,applicationId],
+            );
             const intent = await client.query(
                 `
           update filesvc.upload_intents ui
@@ -153,6 +162,20 @@ export class PostgresUploadIntentRepository implements UploadIntentRepository {
                 return false;
             }
 
+            const source=(await client.query<{bucket_id:string;object_key:string;size_bytes:string;expires_at:Date}>(
+                `select f.bucket_id,f.object_key,f.size_bytes,ui.expires_at from filesvc.files f
+                 join filesvc.upload_intents ui on ui.file_id=f.id where f.id=$1`,[fileId],
+            )).rows[0];
+            const rejected=await settleStorage(client,auditActor,{fileId,bucketId:source.bucket_id,objectKey:source.object_key,
+                kind:"initial_upload",expectedBytes:Number(source.size_bytes),expiresAt:source.expires_at},actualSizeBytes);
+            if(rejected) {
+                await client.query(`update filesvc.files set status='quarantined',size_bytes=$2,content_type=$3,updated_at=now() where id=$1`,[fileId,actualSizeBytes,actualContentType]);
+                await client.query(`update filesvc.upload_intents set completed_at=null where file_id=$1`,[fileId]);
+                await recordAudit(auditActor,{action:"file.quarantined",outcome:"failure",resourceType:"file",resourceId:fileId,details:{reason:rejected}},client);
+                await client.query("commit");
+                return rejected;
+            }
+
             await client.query(
                 `
           update filesvc.files
@@ -162,6 +185,26 @@ export class PostgresUploadIntentRepository implements UploadIntentRepository {
         `,
                 [fileId, tenantId, applicationId, actualSizeBytes, actualContentType],
             );
+            await client.query(
+                `insert into filesvc.file_versions
+                 (file_id, version_number, bucket_id, object_key, original_name, content_type,
+                  size_bytes, checksum_sha256, status, created_by_kind, created_by_id, completed_at)
+                 select id, 1, bucket_id, object_key, original_name, content_type, size_bytes,
+                        checksum_sha256, 'available', $4, $5::uuid, now()
+                 from filesvc.files where id = $1 and tenant_id = $2 and application_id = $3
+                 on conflict (file_id, version_number) do nothing`,
+                [fileId, tenantId, applicationId, auditActor.userId ? "user" : "api_key", auditActor.userId ?? auditActor.keyId],
+            );
+            await client.query(
+                `update filesvc.files f set current_version_id = v.id
+                 from filesvc.file_versions v
+                 where f.id = $1 and f.tenant_id = $2 and f.application_id = $3
+                   and v.file_id = f.id and v.version_number = 1 and f.current_version_id is null`,
+                [fileId, tenantId, applicationId],
+            );
+            await client.query(`update filesvc.storage_allocations a set version_id=f.current_version_id,updated_at=now()
+              from filesvc.files f where f.id=$1 and a.file_id=f.id and a.bucket_id=f.bucket_id and a.object_key=f.object_key
+                and a.tenant_id=$2 and a.application_id=$3`,[fileId,tenantId,applicationId]);
             await recordAudit(
                 auditActor,
                 {
@@ -183,18 +226,25 @@ export class PostgresUploadIntentRepository implements UploadIntentRepository {
         }
     }
 
-    async quarantineUpload(auditActor: AuthenticatedApplication, fileId: string, tenantId: string, applicationId: string): Promise<void> {
+    async quarantineUpload(auditActor: AuthenticatedApplication, fileId: string, tenantId: string, applicationId: string, actualSizeBytes?:number, actualContentType?:string): Promise<void> {
         const client = await this.pool.connect();
         try {
             await client.query("begin");
+            const source=(await client.query<{bucket_id:string;object_key:string;size_bytes:string;expires_at:Date}>(
+                `select f.bucket_id,f.object_key,f.size_bytes,ui.expires_at from filesvc.files f
+                 join filesvc.upload_intents ui on ui.file_id=f.id where f.id=$1 and f.tenant_id=$2 and f.application_id=$3
+                   and f.status='pending_upload' for update of f`,[fileId,tenantId,applicationId],
+            )).rows[0];
+            if(source && actualSizeBytes!==undefined) await settleStorage(client,auditActor,{fileId,bucketId:source.bucket_id,
+                objectKey:source.object_key,kind:"initial_upload",expectedBytes:Number(source.size_bytes),expiresAt:source.expires_at},actualSizeBytes,true);
             const result = await client.query(
                 `
         update filesvc.files
-        set status = 'quarantined', updated_at = now()
+        set status = 'quarantined', size_bytes=coalesce($4::bigint,size_bytes),content_type=coalesce($5::text,content_type),updated_at = now()
         where id = $1 and tenant_id = $2 and application_id = $3
           and status = 'pending_upload'
       `,
-                [fileId, tenantId, applicationId],
+                [fileId, tenantId, applicationId,actualSizeBytes??null,actualContentType??null],
             );
             if (result.rowCount)
                 await recordAudit(

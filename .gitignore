@@ -30,6 +30,7 @@
 
 # Local Supabase files
 /supabase/
+/.quota-reports/
 
 # debug
 npm-debug.log*

@@ -2,6 +2,7 @@ import "server-only";
 import { randomUUID } from "node:crypto";
 import { authenticateApplicationKey } from "@/infrastructure/auth/application-key-authenticator";
 import { auditRequestContext, recordAudit, recordUnidentifiedDenial } from "@/infrastructure/audit/record-audit";
+import { enterStorageMutation,isStorageMutation } from "@/infrastructure/storage/storage-maintenance.mjs";
 
 const UUID_IN_PATH = /\/([0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12})(?:\/|$)/i;
 
@@ -12,6 +13,10 @@ export function auditRoute<Args extends unknown[]>(
     options: { signedUrl?: boolean; recordSuccess?: boolean } = {},
 ): (request: Request, ...args: Args) => Promise<Response> {
     return async (request, ...args) => {
+        const release=isStorageMutation(action)?enterStorageMutation():undefined;
+        if(release===null) return Response.json({error:{code:"storage_maintenance",message:"Storage maintenance is in progress. Please try again shortly."}},
+            {status:503,headers:{"Cache-Control":"no-store","Retry-After":"60"}});
+        try {
         const requestId = randomUUID();
         const before = options.recordSuccess !== false ? await authenticateApplicationKey(request).catch(() => null) : null;
         const response = await auditRequestContext.run(requestId, () => handler(request, ...args));
@@ -56,5 +61,6 @@ export function auditRoute<Args extends unknown[]>(
                 );
         }
         return response;
+        } finally { release?.(); }
     };
 }

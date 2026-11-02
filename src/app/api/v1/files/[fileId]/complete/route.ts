@@ -1,4 +1,6 @@
 import { auditRoute } from "@/infrastructure/audit/audit-route";
+import { storageQuotaErrorResponse } from "@/infrastructure/http/storage-quota-errors";
+import { StorageQuotaError } from "@/domain/storage/department-quota";
 import { authenticateApplicationKey } from "@/infrastructure/auth/application-key-authenticator";
 import { canSeeFile } from "@/application/auth/folder-visibility";
 import { SupabaseObjectStorage } from "@/infrastructure/storage/supabase-object-storage";
@@ -50,7 +52,7 @@ async function handlePOST(request: Request, context: { params: Promise<{ fileId:
 
         const actualContentType = objectInfo.contentType ?? upload.contentType;
         if (objectInfo.sizeBytes > getMaxUploadSizeBytes()) {
-            await repository.quarantineUpload(application, fileId, application.tenantId, application.applicationId);
+            await repository.quarantineUpload(application, fileId, application.tenantId, application.applicationId,objectInfo.sizeBytes,actualContentType);
             await objectStorage.deleteObject(upload.bucketId, upload.objectKey).catch((error) => {
                 console.error("Could not remove oversized uploaded object", {
                     message: error instanceof Error ? error.message : "Unknown storage error",
@@ -69,12 +71,18 @@ async function handlePOST(request: Request, context: { params: Promise<{ fileId:
             actualContentType,
         );
         if (!completed) return errorResponse("upload_not_pending", "This upload is no longer pending.", 409);
+        if(typeof completed==="string") {
+            await objectStorage.deleteObject(upload.bucketId,upload.objectKey).catch(()=>undefined);
+            throw new StorageQuotaError(completed);
+        }
 
         return Response.json(
             { data: { fileId, status: "available", sizeBytes: objectInfo.sizeBytes, contentType: actualContentType } },
             { headers: { "Cache-Control": "no-store" } },
         );
     } catch (error) {
+        const quota=storageQuotaErrorResponse(error);
+        if(quota) return quota;
         const serviceError = error as { code?: string; message?: string };
         console.error("Could not complete upload", {
             code: serviceError.code,

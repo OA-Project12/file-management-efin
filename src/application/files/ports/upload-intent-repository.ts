@@ -43,11 +43,13 @@ export interface UploadIntentRepository {
         departmentIds: string[],
         actualSizeBytes: number,
         actualContentType: string,
-    ): Promise<boolean>;
+    ): Promise<boolean | import("@/domain/storage/department-quota").UploadQuotaRejection>;
     quarantineUpload(
         auditActor: import("@/application/auth/authenticated-application").AuthenticatedApplication,
         fileId: string,
         tenantId: string,
         applicationId: string,
+        actualSizeBytes?: number,
+        actualContentType?: string,
     ): Promise<void>;
 }

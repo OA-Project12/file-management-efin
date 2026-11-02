@@ -26,6 +26,22 @@ function getBucketName(): string {
 }
 
 export class SupabaseObjectStorage implements ObjectStorage {
+    async copyObject(bucketId: string, sourceKey: string, destinationKey: string): Promise<void> {
+        const url = process.env.SUPABASE_URL;
+        const secret = process.env.SUPABASE_SECRET_KEY;
+        if (!url || !secret) throw new Error("Supabase Storage is not configured.");
+        // Bound the copy request well below the ten-minute restore lease used by purge.
+        const deadline = AbortSignal.timeout(60_000);
+        const copyClient = createClient(url,secret,{
+            auth:{persistSession:false,autoRefreshToken:false},
+            global:{fetch:(input,init) => fetch(input,{
+                ...init,signal:AbortSignal.any([deadline,...(init?.signal ? [init.signal] : [])]),
+            })},
+        });
+        const { error } = await copyClient.storage.from(bucketId).copy(sourceKey,destinationKey);
+        if (error) throw new Error(`Could not copy file version: ${error.message}`);
+    }
+
     async createPreviewGrant(bucketId: string, objectKey: string, expiresInSeconds: number) {
         const { data, error } = await getStorageClient().storage.from(bucketId).createSignedUrl(objectKey, expiresInSeconds);
 

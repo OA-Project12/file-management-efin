@@ -1,5 +1,6 @@
 import { auditRoute } from "@/infrastructure/audit/audit-route";
 import { RequestFileUpload } from "@/application/files/request-file-upload";
+import { storageQuotaErrorDetails } from "@/infrastructure/http/storage-quota-errors";
 import { departmentIdsForRole, hasDepartmentRole } from "@/application/auth/department-authorization";
 import { authenticateApplicationKey } from "@/infrastructure/auth/application-key-authenticator";
 import { PostgresUploadIntentRepository } from "@/infrastructure/database/postgres-upload-intent-repository";
@@ -133,6 +134,7 @@ async function handlePOST(request: Request): Promise<Response> {
                 });
                 items.push({ index, status: "ready", ...upload });
             } catch (error) {
+                const quota=storageQuotaErrorDetails(error);
                 console.error("Could not create batch upload intent", {
                     index,
                     message: error instanceof Error ? error.message : "Unknown error",
@@ -140,7 +142,7 @@ async function handlePOST(request: Request): Promise<Response> {
                 items.push({
                     index,
                     status: "error",
-                    error: { code: "service_unavailable", message: "Could not create an upload intent for this file." },
+                    error: { code:quota?.code??"service_unavailable",message:quota?.message??"Could not create an upload intent for this file." },
                 });
             }
         }

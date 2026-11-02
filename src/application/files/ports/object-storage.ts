@@ -25,4 +25,5 @@ export interface ObjectStorage {
   ): Promise<DownloadGrant>;
   getObjectInfo(bucketId: string, objectKey: string): Promise<StoredObjectInfo | null>;
   deleteObject(bucketId: string, objectKey: string): Promise<void>;
+  copyObject(bucketId: string, sourceKey: string, destinationKey: string): Promise<void>;
 }

@@ -10,6 +10,8 @@
     "key:create": "node --env-file=.env.local scripts/create-application-key.mjs",
     "storage:limits": "node --env-file=.env.local scripts/configure-storage-limits.mjs",
     "worker:outbox": "node --env-file=.env.local scripts/process-outbox.mjs",
+    "quota:backfill": "node --env-file=.env.local scripts/quota-maintenance.mjs backfill",
+    "quota:reconcile": "node --env-file=.env.local scripts/quota-maintenance.mjs reconcile",
     "admin:bootstrap": "node --env-file=.env.local scripts/bootstrap-tenant-admin.mjs"
   },
   "dependencies": {

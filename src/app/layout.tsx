@@ -1,6 +1,8 @@
 import type { Metadata } from "next";
 import "./globals.css";
 import "./redesign.css";
+import "./file-versions.css";
+import "./storage-quotas.css";
 import { IBM_Plex_Sans_Thai } from "next/font/google";
 
 const font = IBM_Plex_Sans_Thai({ subsets: ["thai", "latin"], weight: ["400", "500", "600", "700"], display: "swap", variable: "--font-efin" });

@@ -1,7 +1,10 @@
 import { createRequire } from "node:module";
 import process from "node:process";
-import { randomUUID } from "node:crypto";
+import { purgeFileObjects,finishFilePurge } from "./file-purge.mjs";
 import { createClient } from "@supabase/supabase-js";
+import { runObjectCleanup } from "./object-cleanup.mjs";
+import { removeStoredObjectIfPresent } from "./worker-storage.mjs";
+import { enterStorageMutation } from "../src/infrastructure/storage/storage-maintenance.mjs";
 
 const require = createRequire(import.meta.url);
 const { Pool } = require("pg");
@@ -29,6 +32,9 @@ const pool = new Pool({
 
 const supabase = createClient(supabaseUrl, supabaseSecretKey, {
     auth: { persistSession: false, autoRefreshToken: false },
+    global: { fetch: (input,init) => fetch(input,{
+        ...init,signal:AbortSignal.any([AbortSignal.timeout(30_000),...(init?.signal ? [init.signal] : [])]),
+    }) },
 });
 
 let stopping = false;
@@ -99,7 +105,10 @@ function validatePayload(event) {
     if (typeof bucketId !== "string" || !/^[a-z0-9][a-z0-9_-]{1,61}[a-z0-9]$/.test(bucketId)) {
         throw new Error("Outbox payload has an invalid bucket ID.");
     }
-    if (objectKey !== `${tenantId}/${applicationId}/${fileId}`) {
+    const prefix = `${tenantId}/${applicationId}/${fileId}`;
+    const suffix = typeof objectKey === "string" && objectKey.startsWith(`${prefix}/versions/`)
+        ? objectKey.slice(`${prefix}/versions/`.length) : "";
+    if (objectKey !== prefix && !uuidPattern.test(suffix)) {
         throw new Error("Outbox payload has an unexpected object key.");
     }
 
@@ -107,61 +116,9 @@ function validatePayload(event) {
 }
 
 async function removeObjectIfPresent(bucketId, objectKey) {
-    const { data: info, error: infoError } = await supabase.storage.from(bucketId).info(objectKey);
-    if (infoError) {
-        if (infoError.status === 404) return;
-        throw new Error(`Could not inspect Storage object: ${infoError.message}`);
-    }
-    if (!info) return;
-
-    const { error } = await supabase.storage.from(bucketId).remove([objectKey]);
-    if (error) throw new Error(`Could not remove Storage object: ${error.message}`);
+    await removeStoredObjectIfPresent(supabase,bucketId,objectKey);
 }
 
-async function finishEvent(event, file) {
-    const client = await pool.connect();
-    try {
-        await client.query("begin");
-        const fileUpdate = await client.query(
-            `
-        update filesvc.files
-        set status = 'deleted', trashed_at = null, updated_at = now()
-        where id = $1 and tenant_id = $2 and application_id = $3
-          and status = 'deleting'
-        returning id
-      `,
-            [file.fileId, file.tenantId, file.applicationId],
-        );
-
-        if (fileUpdate.rowCount !== 1) {
-            const existing = await client.query(
-                `select status from filesvc.files where id = $1 and tenant_id = $2 and application_id = $3`,
-                [file.fileId, file.tenantId, file.applicationId],
-            );
-            const currentStatus = existing.rows[0]?.status;
-            if (currentStatus !== "deleted") {
-                console.error("Delete event completed but file status was not deleting", {
-                    outboxId: event.id,
-                    currentStatus: currentStatus ?? "missing",
-                });
-            }
-        }
-
-        await client.query(`update filesvc.outbox set processed_at = now() where id = $1 and processed_at is null`, [event.id]);
-        if (fileUpdate.rowCount === 1) await client.query(
-            `insert into filesvc.audit_log
-             (tenant_id, application_id, actor_kind, action, outcome, resource_type, resource_id, request_id, details)
-             values ($1, $2, 'worker', 'file.object_deleted', 'success', 'file', $3, $4, $5::jsonb)`,
-            [file.tenantId, file.applicationId, file.fileId, randomUUID(), JSON.stringify({ outboxId: event.id })],
-        );
-        await client.query("commit");
-    } catch (error) {
-        await client.query("rollback").catch(() => undefined);
-        throw error;
-    } finally {
-        client.release();
-    }
-}
 
 async function scheduleRetry(event, error) {
     const retrySeconds = Math.min(30 * 2 ** Math.min(event.attempts, 7), 3_600);
@@ -184,19 +141,35 @@ async function scheduleRetry(event, error) {
 async function processEvent(event) {
     try {
         const file = validatePayload(event);
-        await removeObjectIfPresent(file.bucketId, file.objectKey);
-        await finishEvent(event, file);
-        console.log("File deletion completed", { outboxId: event.id, fileId: file.fileId });
+        const verified = await purgeFileObjects(pool,file,removeObjectIfPresent);
+        await finishFilePurge(pool,event,file,verified);
+        console.log("File deletion completed", {outboxId:event.id,fileId:file.fileId});
     } catch (error) {
-        await scheduleRetry(event, error);
+        await scheduleRetry(event,error);
     }
 }
 
 async function main() {
     console.log("Outbox worker started.");
     let nextAuditMaintenance = 0;
+    let nextObjectCleanup = 0;
     try {
         while (!stopping) {
+            if(Date.now() >= nextObjectCleanup) {
+                const release=enterStorageMutation();
+                if(release) {
+                try {
+                    const result=await runObjectCleanup(pool,removeObjectIfPresent,{limit:BATCH_SIZE,stopping:()=>stopping});
+                    if(result.scheduled || result.processed) console.log("Object cleanup cycle completed",result);
+                } catch(error) {
+                    console.error("Object cleanup cycle failed; retrying in one minute",{
+                        code: typeof error?.code === "string" ? error.code : "cleanup_cycle_failed",
+                    });
+                }
+                finally {release();}
+                nextObjectCleanup=Date.now()+60_000;
+                }
+            }
             if (Date.now() >= nextAuditMaintenance) {
                 try {
                     const result = await pool.query("select filesvc.maintain_audit_retention() as result");
@@ -223,10 +196,14 @@ async function main() {
             }
             let processed = 0;
             for (let index = 0; index < BATCH_SIZE && !stopping; index += 1) {
+                const release=enterStorageMutation();
+                if(!release)break;
+                try {
                 const event = await claimEvent();
                 if (!event) break;
                 processed += 1;
                 await processEvent(event);
+                }finally{release();}
             }
             if (processed === 0 && !stopping) await sleep(IDLE_DELAY_MS);
         }

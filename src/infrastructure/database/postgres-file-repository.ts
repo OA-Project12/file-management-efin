@@ -54,16 +54,22 @@ export class PostgresFileRepository implements FileRepository {
 
     async findAvailableById(fileId: string, scope: FileScope): Promise<FileRecord | null> {
         const result = await this.pool.query<FileRow>(
-            `select id, tenant_id, application_id, owner_subject, bucket_id,
-              object_key, original_name, content_type, size_bytes, status, created_at
-       from filesvc.files
-       where id = $1
-         and tenant_id = $2
-         and application_id = $3
-         and ($4::text is null or owner_subject = $4)
-         and department_id = any($5::uuid[])
-         and ($6::uuid is null or $7::boolean or filesvc.folder_visible(tenant_id, application_id, department_id, folder_id, $6::uuid))
-         and status = 'available'`,
+            `select f.id, f.tenant_id, f.application_id, f.owner_subject,
+              coalesce(v.bucket_id,f.bucket_id) as bucket_id,
+              coalesce(v.object_key,f.object_key) as object_key,
+              coalesce(v.original_name,f.original_name) as original_name,
+              coalesce(v.content_type,f.content_type) as content_type,
+              coalesce(v.size_bytes,f.size_bytes) as size_bytes, f.status, f.created_at
+       from filesvc.files f
+       left join filesvc.file_versions v on v.id=f.current_version_id and v.file_id=f.id
+       where f.id = $1
+         and f.tenant_id = $2
+         and f.application_id = $3
+         and ($4::text is null or f.owner_subject = $4)
+         and f.department_id = any($5::uuid[])
+         and ($6::uuid is null or $7::boolean or filesvc.folder_visible(f.tenant_id, f.application_id, f.department_id, f.folder_id, $6::uuid))
+         and f.status = 'available'
+         and (f.current_version_id is null or v.status='available')`,
             [fileId, scope.tenantId, scope.applicationId, scope.ownerSubject, scope.departmentIds, scope.userId ?? null, scope.isTenantAdmin ?? false],
         );
 

@@ -6,11 +6,14 @@ import { useRouter } from "next/navigation";
 import { AdminUsers } from "./admin-users";
 import { FolderAccess } from "./folder-access";
 import { AuditTrail } from "./audit-trail";
+import { StorageQuotas } from "./storage-quotas";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { DialogShell } from "@/components/ui/dialog-shell";
-import { Building2, ChevronDown, ClipboardList, Download, FileText, FolderClosed, FolderOpen, KeyRound, LogOut, Plus, RefreshCw, Search, ShieldCheck, Trash2, Upload, UsersRound, X } from "lucide-react";
+import { Tabs } from "@base-ui/react/tabs";
+import { FileVersions } from "./file-versions";
+import { Building2, ChevronDown, ClipboardList, Download, FileText, FolderClosed, FolderOpen, HardDrive, KeyRound, LogOut, Plus, RefreshCw, Search, ShieldCheck, Trash2, Upload, UsersRound, X } from "lucide-react";
 
 type FileRow = {
     id: string;
@@ -36,7 +39,7 @@ type KeyRow = {
     revokedAt: string | null;
     lastUsedAt: string | null;
 };
-type Tab = "files" | "trash" | "keys" | "users" | "audit";
+type Tab = "files" | "trash" | "keys" | "users" | "audit" | "storage";
 type UploadResult = { name: string; status: "pending" | "uploading" | "completed" | "partial" | "error"; message?: string; retryable?: boolean };
 type BatchIntent = { index: number; status: "ready" | "error"; fileId?: string; signedUrl?: string; error?: { message: string } };
 type FileFilters = { tag: string; contentType: string; createdFrom: string; createdTo: string };
@@ -96,6 +99,8 @@ export default function Home() {
     const [selected, setSelected] = useState<FileRow | null>(null);
     const inspectorCloseRef = useRef<HTMLButtonElement>(null);
     const [editingMetadata, setEditingMetadata] = useState(false);
+    const [detailTab, setDetailTab] = useState("details");
+    const [versionBusy, setVersionBusy] = useState(false);
     const [preview, setPreview] = useState("");
     const [keys, setKeys] = useState<KeyRow[]>([]);
     const [keyLoading, setKeyLoading] = useState(false);
@@ -128,7 +133,7 @@ export default function Home() {
                 headers: { Authorization: `Bearer ${session.access_token}`, ...(init.body ? { "Content-Type": "application/json" } : {}), ...init.headers },
             });
             const body = await response.json().catch(() => ({}));
-            if (!response.ok) throw new Error(body?.error?.message ?? `Request failed (${response.status})`);
+            if (!response.ok) throw Object.assign(new Error(body?.error?.message ?? `Request failed (${response.status})`), {code:body?.error?.code,status:response.status,details:body?.error?.details});
             return body;
         },
         [],
@@ -496,6 +501,7 @@ export default function Home() {
         try {
             const data = await api(`/files/${file.id}/preview-url`, { method: "POST", body: JSON.stringify({ ownerSubject: owner }) });
             setSelected(file);
+            setDetailTab("details");
             setEditingMetadata(false);
             setPreview(data.data.signedUrl);
         } catch (error) {
@@ -503,7 +509,7 @@ export default function Home() {
         }
     }
 
-    function selectFile(file: FileRow) { setSelected(file); setPreview(""); setEditingMetadata(false); }
+    function selectFile(file: FileRow) { setSelected(file); setPreview(""); setEditingMetadata(false); setDetailTab("details"); }
 
     async function download(file: FileRow) {
         try {
@@ -640,6 +646,7 @@ export default function Home() {
     const canEditFile = (file: FileRow) => { const role = departments.find((item) => item.id === file.departmentId)?.role; return role === "admin" || role === "editor"; };
     const canAdminFile = (file: FileRow) => departments.find((item) => item.id === file.departmentId)?.role === "admin";
     const isGlobalFilesView = tab === "files" && !departmentId;
+    const canViewStorage=scopes.includes('files:read')&&(isTenantAdmin||departments.some(item=>item.role==='admin'||item.role==='editor'));
 
     async function refreshCurrentView() {
         if (tab === "files") await Promise.all([loadDepartments(), loadFolders(), search()]);
@@ -702,6 +709,7 @@ export default function Home() {
                     <FolderClosed aria-hidden="true" /> ไฟล์ทุกหน่วยงาน
                 </button>
                 <button className={tab === "trash" ? "nav active" : "nav"} onClick={() => { switchTab("trash"); void loadTrash().catch(() => {}); }}><Trash2 aria-hidden="true" /> ถังขยะ</button>
+                {canViewStorage&&<button className={tab==='storage'?'nav active':'nav'} aria-current={tab==='storage'?'page':undefined} onClick={()=>switchTab('storage')}><HardDrive aria-hidden="true"/> พื้นที่จัดเก็บ</button>}
                 {(isTenantAdmin || scopes.includes("keys:manage")) && <div className="caption admin-caption">การจัดการ</div>}
                 {isTenantAdmin && <button className={tab === "users" ? "nav active" : "nav"} onClick={() => switchTab("users")}><UsersRound aria-hidden="true" /> ผู้ใช้และสิทธิ์</button>}
                 {scopes.includes("keys:manage") && (
@@ -756,13 +764,13 @@ export default function Home() {
             <section className="content">
                 <header className="topbar">
                     <span aria-label="ตำแหน่งปัจจุบัน">
-                        <FolderClosed size={16} aria-hidden="true" /> {tab === "files" ? departmentId ? `${selectedDepartment?.name ?? "หน่วยงาน"} / ${folderPath.at(-1)?.name ?? "ไฟล์ทั้งหมด"}` : "ไฟล์ทุกหน่วยงาน" : tab === "trash" ? "ถังขยะ" : tab === "users" ? "จัดการผู้ใช้" : tab === "audit" ? "ประวัติการใช้งาน" : "API keys"}
+                        <FolderClosed size={16} aria-hidden="true" /> {tab === "files" ? departmentId ? `${selectedDepartment?.name ?? "หน่วยงาน"} / ${folderPath.at(-1)?.name ?? "ไฟล์ทั้งหมด"}` : "ไฟล์ทุกหน่วยงาน" : tab === "trash" ? "ถังขยะ" : tab === "users" ? "จัดการผู้ใช้" : tab === "audit" ? "ประวัติการใช้งาน" : tab === "storage" ? "พื้นที่จัดเก็บ" : "API keys"}
                     </span>
                     {(tab === "files" || tab === "trash" || tab === "keys") && <button className="quiet" onClick={() => void refreshCurrentView().catch((error) => setNotice(errorText(error)))}>
                         <RefreshCw size={17} aria-hidden="true" /> โหลดใหม่
                     </button>}
                 </header>
-                <div className="mobile-location">
+                {tab!=='storage'&&<div className="mobile-location">
                     <label>{tab === "files" ? "หน่วยงาน" : "เปิดคลังหน่วยงาน"}
                         <select value={tab === "files" ? departmentId : ""} onChange={(event) => void selectDepartment(event.target.value)}>
                             <option value="">{tab === "files" ? "ไฟล์ทุกหน่วยงาน" : "เลือกหน่วยงาน"}</option>
@@ -776,7 +784,7 @@ export default function Home() {
                             {folders.map((folder) => <option key={folder.id} value={folder.id}>{folder.name}</option>)}
                         </select>
                     </label>}
-                </div>
+                </div>}
                 {notice && (
                     <div className="notice-bar" role="status">
                         {notice}
@@ -990,6 +998,8 @@ export default function Home() {
                     <AdminUsers key={usersRevision} api={api} departments={departments} onNotice={setNotice} onInvite={inviteUser} />
                 ) : tab === "audit" ? (
                     <AuditTrail api={api} />
+                ) : tab === "storage" ? (
+                    <StorageQuotas api={api} />
                 ) : (
                     <>
                         <div className="heading">
@@ -1081,10 +1091,11 @@ export default function Home() {
             </section>
             {selected && (
                 <aside className="inspector" aria-label="รายละเอียดไฟล์" onKeyDown={(event) => {
+                    if (!event.currentTarget.contains(event.target as Node)) return;
                     if (!window.matchMedia("(max-width: 720px)").matches) return;
-                    if (event.key === "Escape") { setSelected(null); setPreview(""); setEditingMetadata(false); return; }
+                    if (event.key === "Escape") { if(!versionBusy) {setSelected(null); setPreview(""); setEditingMetadata(false);} return; }
                     if (event.key !== "Tab") return;
-                    const controls = Array.from(event.currentTarget.querySelectorAll<HTMLElement>('button:not([disabled]),input:not([disabled]),select:not([disabled])'));
+                    const controls = Array.from(event.currentTarget.querySelectorAll<HTMLElement>('button:not([disabled]),a[href],input:not([disabled]),select:not([disabled]),[tabindex="0"]')).filter(element=>element.getClientRects().length>0);
                     const first = controls[0]; const last = controls.at(-1);
                     if (event.shiftKey && document.activeElement === first && last) { event.preventDefault(); last.focus(); }
                     else if (!event.shiftKey && document.activeElement === last && first) { event.preventDefault(); first.focus(); }
@@ -1096,6 +1107,7 @@ export default function Home() {
                         </div>
                         <button
                             ref={inspectorCloseRef}
+                            disabled={versionBusy}
                             className="quiet"
                             onClick={() => {
                                 setSelected(null);
@@ -1106,6 +1118,12 @@ export default function Home() {
                             <X size={18} aria-hidden="true" /><span className="sr-only">ปิดรายละเอียดไฟล์</span>
                         </button>
                     </div>
+                    <Tabs.Root className="file-details-root" value={detailTab} onValueChange={value=>{if(!versionBusy)setDetailTab(String(value));}}>
+                    <Tabs.List className="file-detail-tabs" aria-label="มุมมองเอกสาร">
+                        <Tabs.Tab value="details" disabled={versionBusy}>รายละเอียด</Tabs.Tab>
+                        <Tabs.Tab value="versions">ประวัติเวอร์ชัน</Tabs.Tab>
+                    </Tabs.List>
+                    <Tabs.Panel value="details">
                     <div className="preview">
                         {preview ? (
                             selected.contentType === "application/pdf" || selected.contentType === "text/plain" ? (
@@ -1175,6 +1193,21 @@ export default function Home() {
                             </button>
                         )}
                     </div>
+                    </Tabs.Panel>
+                    <Tabs.Panel value="versions">
+                        <FileVersions key={selected.id} fileId={selected.id} fileName={selected.displayName??selected.originalName??"เอกสาร"}
+                            canEdit={canEditFile(selected)&&scopes.includes("files:write")} api={api} onBusyChange={setVersionBusy}
+                            onCurrentChanged={version=>{
+                                setPreview("");
+                                if(version) {
+                                    const metadata={originalName:version.originalName,contentType:version.contentType,sizeBytes:version.sizeBytes};
+                                    setSelected(current=>current?.id===selected.id?{...current,...metadata}:current);
+                                    setFiles(current=>current.map(file=>file.id===selected.id?{...file,...metadata}:file));
+                                }
+                                void search().catch(()=>setNotice("บันทึกเวอร์ชันแล้ว แต่โหลดรายการไฟล์ใหม่ไม่สำเร็จ กรุณากดรีเฟรช"));
+                            }}/>
+                    </Tabs.Panel>
+                    </Tabs.Root>
                 </aside>
             )}
             {newKey && (
@@ -1208,6 +1241,7 @@ export default function Home() {
             <nav className="mobile-nav" aria-label="เมนูมือถือ">
                 <button className={tab === "files" ? "active" : ""} aria-current={tab === "files" ? "page" : undefined} onClick={() => void selectAllFiles()}><FolderClosed aria-hidden="true" />ไฟล์รวม</button>
                 <button className={tab === "trash" ? "active" : ""} onClick={() => { switchTab("trash"); void loadTrash().catch(() => {}); }}><Trash2 aria-hidden="true" />ถังขยะ</button>
+                {canViewStorage&&<button className={tab==='storage'?'active':''} aria-current={tab==='storage'?'page':undefined} onClick={()=>switchTab('storage')}><HardDrive aria-hidden="true"/>พื้นที่</button>}
                 {isTenantAdmin && <button className={tab === "users" ? "active" : ""} onClick={() => switchTab("users")}><UsersRound aria-hidden="true" />ผู้ใช้</button>}
                 {scopes.includes("keys:manage") && <button className={tab === "keys" ? "active" : ""} onClick={() => { switchTab("keys"); void loadKeys().catch(() => {}); }}><KeyRound aria-hidden="true" />Keys</button>}
                 {isTenantAdmin && <button className={tab === "audit" ? "active" : ""} onClick={() => switchTab("audit")}><ClipboardList aria-hidden="true" />Audit</button>}

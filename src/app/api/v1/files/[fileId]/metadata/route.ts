@@ -1,6 +1,8 @@
 import { auditRoute } from "@/infrastructure/audit/audit-route";
 import { getDatabasePool } from "@/infrastructure/database/pool";
 import { recordAudit } from "@/infrastructure/audit/record-audit";
+import { transferStorage } from "@/infrastructure/database/storage-quota-accounting";
+import { storageQuotaErrorResponse } from "@/infrastructure/http/storage-quota-errors";
 import { authenticateApplicationKey } from "@/infrastructure/auth/application-key-authenticator";
 import { canSeeFile, canSeeFolder } from "@/application/auth/folder-visibility";
 import { departmentIdsForRole, hasDepartmentRole } from "@/application/auth/department-authorization";
@@ -113,6 +115,8 @@ async function handlePATCH(request: Request, { params }: { params: Promise<{ fil
         if (!result.rows[0]) { await client.query("rollback"); return errorResponse("file_or_folder_not_found", "File or target folder was not found.", 404); }
         const previous = before.rows[0];
         const updated = result.rows[0] as { display_name: string; departmentId: string; folderId: string | null; tags: string[] };
+        if(previous && previous.department_id!==updated.departmentId)
+            await transferStorage(client,app,fileId,previous.department_id,updated.departmentId);
         await recordAudit(app, { action: "file.metadata_update", outcome: "success", resourceType: "file", resourceId: fileId,
             details: { beforeDepartmentId: previous?.department_id ?? null, afterDepartmentId: updated.departmentId,
                 beforeFolderId: previous?.folder_id ?? null, afterFolderId: updated.folderId,
@@ -123,6 +127,8 @@ async function handlePATCH(request: Request, { params }: { params: Promise<{ fil
         } catch (error) { await client.query("rollback").catch(() => undefined); throw error; }
         finally { client.release(); }
     } catch (error) {
+        const quota=storageQuotaErrorResponse(error);
+        if(quota) return quota;
         console.error("Could not update file metadata", { message: error instanceof Error ? error.message : "Unknown error" });
         return errorResponse("service_unavailable", "Could not update file metadata.", 503);
     }
