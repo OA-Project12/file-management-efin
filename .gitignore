@@ -28,13 +28,8 @@
 /docs/
 /prototype/
 
-# Supabase local state and secrets (keep migrations and rollbacks tracked)
-/supabase/.temp/
-/supabase/.branches/
-/supabase/.env
-/supabase/.env.*
-!/supabase/migrations/
-!/supabase/rollbacks/
+# Local Supabase files
+/supabase/
 
 # debug
 npm-debug.log*
