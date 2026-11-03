@@ -3,6 +3,7 @@
   "build": { "builder": "DOCKERFILE", "dockerfilePath": "Dockerfile" },
   "deploy": {
     "startCommand": "node scripts/process-outbox.mjs",
+    "preDeployCommand": ["node scripts/check-deployment.mjs worker"],
     "numReplicas": 1,
     "region": "asia-southeast1-eqsg3a",
     "sleepApplication": false,

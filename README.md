@@ -18,6 +18,7 @@
 | Dockerfile path | `/Dockerfile` (ตรวจ build logs ว่าใช้ Dockerfile) | เหมือนเว็บ |
 | Root directory | Repository root | Repository root |
 | Start command | `node node_modules/next/dist/bin/next start --hostname 0.0.0.0` | `node scripts/process-outbox.mjs` |
+| Pre-deploy (อ่านอย่างเดียว) | `node scripts/check-deployment.mjs web` | `node scripts/check-deployment.mjs worker` |
 | Region / replicas | Singapore / 1 | Singapore / 1 |
 | Serverless | ปิด | ปิด |
 | Restart policy / retries | On Failure / 10 | On Failure / 10 |
@@ -31,6 +32,8 @@
 สำหรับ Railway CLI/Public API รุ่นที่ใช้ตรวจ (CLI 5.71.0) enum `Builder` มี `RAILPACK` แต่ไม่มี `DOCKERFILE` จึงคง builder ที่ API รองรับและตั้ง `dockerfilePath=/Dockerfile` ให้ระบบตรวจพบไฟล์ โดยยึด build logs เป็นหลักฐานว่าใช้ Dockerfile จริง ไม่ส่งค่า `DOCKERFILE` เข้า GraphQL enum โดยตรง
 
 Start Command ของ Docker deployment ถูกเรียกแบบ exec form จึงใช้ `node ...` โดยตรง ไม่ใส่ `exec` นำหน้าเหมือน shell script (`exec` ไม่ใช่ executable ใน image) และไม่ต้องขยาย `$PORT` ใน command เพราะ Next.js อ่าน environment เอง ดู [Railway Start Command](https://docs.railway.com/deployments/start-command)
+
+ใช้ read-only preflight เป็น pre-deploy command เพื่อตรวจ TLS/role/application/private bucket จาก runtime บน Railway โดยตรงก่อนเริ่ม process จริง ไม่ต้องสร้าง SSH key สำหรับการตรวจนี้ และไม่เรียก cleanup/retention หรือเขียนฐานข้อมูล หากตรวจไม่ผ่าน deployment ต้องหยุด ส่วน healthcheck ยังใช้ตรวจ database readiness เมื่อเว็บเริ่มแล้ว
 
 ### ทางเลือกส่ง release ด้วย CLI (เลือกใช้กับ EFIN DMS รอบนี้)
 

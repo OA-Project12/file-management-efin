@@ -3,6 +3,7 @@
   "build": { "builder": "DOCKERFILE", "dockerfilePath": "Dockerfile" },
   "deploy": {
     "startCommand": "node node_modules/next/dist/bin/next start --hostname 0.0.0.0",
+    "preDeployCommand": ["node scripts/check-deployment.mjs web"],
     "healthcheckPath": "/api/health/ready",
     "healthcheckTimeout": 300,
     "numReplicas": 1,
