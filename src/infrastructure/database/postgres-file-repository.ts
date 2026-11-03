@@ -13,6 +13,7 @@ import type {
 } from "@/application/files/ports/file-repository";
 import { getDatabasePool } from "@/infrastructure/database/pool";
 import { recordAudit } from "@/infrastructure/audit/record-audit";
+import { fileSearchPatterns } from "@/domain/files/file-search-query";
 
 interface FileRow {
     id: string;
@@ -117,6 +118,14 @@ export class PostgresFileRepository implements FileRepository {
           and ($11::text is null or lower(f.content_type) = $11)
           and ($12::timestamptz is null or f.created_at >= $12)
           and ($13::timestamptz is null or f.created_at < $13)
+          and not exists (
+            select 1 from unnest($16::text[]) as search(pattern)
+            where not (
+              coalesce(f.display_name,'') ilike search.pattern escape E'\\\\'
+              or coalesce(f.original_name,'') ilike search.pattern escape E'\\\\'
+              or exists (select 1 from unnest(f.tags) as tag(value) where tag.value ilike search.pattern escape E'\\\\')
+            )
+          )
           and ($4::timestamptz is null or (f.created_at, f.id) < ($4::timestamptz, $5::uuid))
         order by f.created_at desc, f.id desc
         limit $6
@@ -137,6 +146,7 @@ export class PostgresFileRepository implements FileRepository {
                 filters.createdBefore ?? null,
                 scope.userId ?? null,
                 scope.isTenantAdmin ?? false,
+                fileSearchPatterns(filters.q),
             ],
         );
 

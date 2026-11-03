@@ -1,6 +1,6 @@
 import { createRequire } from "node:module";
 import process from "node:process";
-import { purgeFileObjects,finishFilePurge } from "./file-purge.mjs";
+import { purgeFileObjects, finishFilePurge } from "./file-purge.mjs";
 import { createClient } from "@supabase/supabase-js";
 import { runObjectCleanup } from "./object-cleanup.mjs";
 import { removeStoredObjectIfPresent } from "./worker-storage.mjs";
@@ -32,9 +32,13 @@ const pool = new Pool({
 
 const supabase = createClient(supabaseUrl, supabaseSecretKey, {
     auth: { persistSession: false, autoRefreshToken: false },
-    global: { fetch: (input,init) => fetch(input,{
-        ...init,signal:AbortSignal.any([AbortSignal.timeout(30_000),...(init?.signal ? [init.signal] : [])]),
-    }) },
+    global: {
+        fetch: (input, init) =>
+            fetch(input, {
+                ...init,
+                signal: AbortSignal.any([AbortSignal.timeout(30_000), ...(init?.signal ? [init.signal] : [])]),
+            }),
+    },
 });
 
 let stopping = false;
@@ -106,8 +110,8 @@ function validatePayload(event) {
         throw new Error("Outbox payload has an invalid bucket ID.");
     }
     const prefix = `${tenantId}/${applicationId}/${fileId}`;
-    const suffix = typeof objectKey === "string" && objectKey.startsWith(`${prefix}/versions/`)
-        ? objectKey.slice(`${prefix}/versions/`.length) : "";
+    const suffix =
+        typeof objectKey === "string" && objectKey.startsWith(`${prefix}/versions/`) ? objectKey.slice(`${prefix}/versions/`.length) : "";
     if (objectKey !== prefix && !uuidPattern.test(suffix)) {
         throw new Error("Outbox payload has an unexpected object key.");
     }
@@ -116,9 +120,8 @@ function validatePayload(event) {
 }
 
 async function removeObjectIfPresent(bucketId, objectKey) {
-    await removeStoredObjectIfPresent(supabase,bucketId,objectKey);
+    await removeStoredObjectIfPresent(supabase, bucketId, objectKey);
 }
-
 
 async function scheduleRetry(event, error) {
     const retrySeconds = Math.min(30 * 2 ** Math.min(event.attempts, 7), 3_600);
@@ -141,11 +144,11 @@ async function scheduleRetry(event, error) {
 async function processEvent(event) {
     try {
         const file = validatePayload(event);
-        const verified = await purgeFileObjects(pool,file,removeObjectIfPresent);
-        await finishFilePurge(pool,event,file,verified);
-        console.log("File deletion completed", {outboxId:event.id,fileId:file.fileId});
+        const verified = await purgeFileObjects(pool, file, removeObjectIfPresent);
+        await finishFilePurge(pool, event, file, verified);
+        console.log("File deletion completed", { outboxId: event.id, fileId: file.fileId });
     } catch (error) {
-        await scheduleRetry(event,error);
+        await scheduleRetry(event, error);
     }
 }
 
@@ -155,19 +158,20 @@ async function main() {
     let nextObjectCleanup = 0;
     try {
         while (!stopping) {
-            if(Date.now() >= nextObjectCleanup) {
-                const release=enterStorageMutation();
-                if(release) {
-                try {
-                    const result=await runObjectCleanup(pool,removeObjectIfPresent,{limit:BATCH_SIZE,stopping:()=>stopping});
-                    if(result.scheduled || result.processed) console.log("Object cleanup cycle completed",result);
-                } catch(error) {
-                    console.error("Object cleanup cycle failed; retrying in one minute",{
-                        code: typeof error?.code === "string" ? error.code : "cleanup_cycle_failed",
-                    });
-                }
-                finally {release();}
-                nextObjectCleanup=Date.now()+60_000;
+            if (Date.now() >= nextObjectCleanup) {
+                const release = enterStorageMutation();
+                if (release) {
+                    try {
+                        const result = await runObjectCleanup(pool, removeObjectIfPresent, { limit: BATCH_SIZE, stopping: () => stopping });
+                        if (result.scheduled || result.processed) console.log("Object cleanup cycle completed", result);
+                    } catch (error) {
+                        console.error("Object cleanup cycle failed; retrying in one minute", {
+                            code: typeof error?.code === "string" ? error.code : "cleanup_cycle_failed",
+                        });
+                    } finally {
+                        release();
+                    }
+                    nextObjectCleanup = Date.now() + 60_000;
                 }
             }
             if (Date.now() >= nextAuditMaintenance) {
@@ -183,12 +187,18 @@ async function main() {
                             const alert = await fetch(process.env.AUDIT_ALERT_WEBHOOK_URL, {
                                 method: "POST",
                                 headers: { "Content-Type": "application/json" },
-                                body: JSON.stringify({ event: "audit_retention_failed", service: "file-management-efin", occurredAt: new Date().toISOString() }),
+                                body: JSON.stringify({
+                                    event: "audit_retention_failed",
+                                    service: "file-management-efin",
+                                    occurredAt: new Date().toISOString(),
+                                }),
                                 signal: AbortSignal.timeout(5000),
                             });
                             if (!alert.ok) console.error("Audit alert delivery failed", { status: alert.status });
                         } catch (alertError) {
-                            console.error("Audit alert delivery failed", { message: alertError instanceof Error ? alertError.message : "Unknown error" });
+                            console.error("Audit alert delivery failed", {
+                                message: alertError instanceof Error ? alertError.message : "Unknown error",
+                            });
                         }
                     }
                     nextAuditMaintenance = Date.now() + 60 * 60 * 1000;
@@ -196,14 +206,16 @@ async function main() {
             }
             let processed = 0;
             for (let index = 0; index < BATCH_SIZE && !stopping; index += 1) {
-                const release=enterStorageMutation();
-                if(!release)break;
+                const release = enterStorageMutation();
+                if (!release) break;
                 try {
-                const event = await claimEvent();
-                if (!event) break;
-                processed += 1;
-                await processEvent(event);
-                }finally{release();}
+                    const event = await claimEvent();
+                    if (!event) break;
+                    processed += 1;
+                    await processEvent(event);
+                } finally {
+                    release();
+                }
             }
             if (processed === 0 && !stopping) await sleep(IDLE_DELAY_MS);
         }

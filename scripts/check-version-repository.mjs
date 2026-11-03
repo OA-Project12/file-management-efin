@@ -56,8 +56,12 @@ const scopedClient = {
         }
         if ((failAudit || (failAuditAction && values?.[4] === failAuditAction)) && sql.includes("insert into filesvc.audit_log"))
             throw new Error("injected audit failure");
-        return client.query(sql.replaceAll("filesvc.department_storage_quotas","pg_temp.version_test_quotas")
-            .replaceAll("filesvc.storage_allocations","pg_temp.version_test_allocations"), values);
+        return client.query(
+            sql
+                .replaceAll("filesvc.department_storage_quotas", "pg_temp.version_test_quotas")
+                .replaceAll("filesvc.storage_allocations", "pg_temp.version_test_allocations"),
+            values,
+        );
     },
     release() {},
 };
@@ -78,7 +82,7 @@ function load(filename) {
         if (name === "@/infrastructure/auth/application-key-authenticator") return { authenticateApplicationKey: async () => requestApp };
         if (name === "@/infrastructure/storage/supabase-object-storage") return { SupabaseObjectStorage: TestStorage };
         if (name === "./pool" || name === "@/infrastructure/database/pool") return { getDatabasePool: () => scopedPool };
-        if (name.startsWith("@/")) return load(path.join("src", name.endsWith('.mjs')?name.slice(2):`${name.slice(2)}.ts`));
+        if (name.startsWith("@/")) return load(path.join("src", name.endsWith(".mjs") ? name.slice(2) : `${name.slice(2)}.ts`));
         if (name.startsWith(".")) return load(path.resolve(path.dirname(filename), `${name}.ts`));
         return require(name);
     };
@@ -101,7 +105,11 @@ try {
     // Avoid holding a real department's quota row lock throughout this rollback-only suite.
     await client.query("create temp table version_test_quotas (like filesvc.department_storage_quotas including all) on commit drop");
     await client.query("create temp table version_test_allocations (like filesvc.storage_allocations including all) on commit drop");
-    await client.query("insert into version_test_quotas (tenant_id,application_id,department_id) values ($1,$2,$3)",[app.tenantId,app.applicationId,context.department_id]);
+    await client.query("insert into version_test_quotas (tenant_id,application_id,department_id) values ($1,$2,$3)", [
+        app.tenantId,
+        app.applicationId,
+        context.department_id,
+    ]);
     const fileId = randomUUID();
     const baseKey = `${app.tenantId}/${app.applicationId}/${fileId}`;
     const { PostgresUploadIntentRepository } = load("src/infrastructure/database/postgres-upload-intent-repository.ts");

@@ -136,18 +136,25 @@ export async function claimObjectCleanup(pool) {
 
 async function finish(pool, job, status, reason = null) {
     return transaction(pool, async (client) => {
-        const parent=await client.query(`select id from filesvc.files
-          where id=$1 and tenant_id=$2 and application_id=$3 for update`,[job.file_id,job.tenant_id,job.application_id]);
-        if(!parent.rowCount) throw new Error("Cleanup parent is missing");
+        const parent = await client.query(
+            `select id from filesvc.files
+          where id=$1 and tenant_id=$2 and application_id=$3 for update`,
+            [job.file_id, job.tenant_id, job.application_id],
+        );
+        if (!parent.rowCount) throw new Error("Cleanup parent is missing");
         const changed = await client.query(
             `update filesvc.object_cleanup_jobs
           set status=$3,finished_at=now(),lease_token=null,last_error_code=$4
           where id=$1 and lease_token=$2 and status='pending' returning id`,
             [job.id, job.lease_token, status, reason],
         );
-        if(changed.rowCount && status==="completed") await releaseDeletedStorage(client,
-            {tenantId:job.tenant_id,applicationId:job.application_id,fileId:job.file_id},
-            [{bucket_id:job.bucket_id,object_key:job.object_key}],{evidence:{cleanupJobId:job.id}});
+        if (changed.rowCount && status === "completed")
+            await releaseDeletedStorage(
+                client,
+                { tenantId: job.tenant_id, applicationId: job.application_id, fileId: job.file_id },
+                [{ bucket_id: job.bucket_id, object_key: job.object_key }],
+                { evidence: { cleanupJobId: job.id } },
+            );
         if (changed.rowCount)
             await audit(client, job, status === "completed" ? "file.cleanup_completed" : "file.cleanup_skipped", "success", { reason });
         return changed.rowCount === 1;

@@ -41,6 +41,7 @@ export interface FileListItem {
 }
 
 export interface FileSearchFilters {
+    q?: string;
     folderId?: string;
     departmentId?: string;
     tag?: string;

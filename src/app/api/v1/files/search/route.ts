@@ -4,6 +4,8 @@ import type { FilePagePosition } from "@/application/files/ports/file-repository
 import { authenticateApplicationKey } from "@/infrastructure/auth/application-key-authenticator";
 import { PostgresFileRepository } from "@/infrastructure/database/postgres-file-repository";
 import { accessibleDepartmentIds, hasDepartmentRole } from "@/application/auth/department-authorization";
+import { createHash } from "node:crypto";
+import { normalizeFileSearchQuery,InvalidFileSearchQuery } from "@/domain/files/file-search-query";
 
 const MAX_REQUEST_BODY_BYTES = 4096;
 const DEFAULT_PAGE_SIZE = 25;
@@ -11,6 +13,7 @@ const MAX_PAGE_SIZE = 100;
 const UUID_PATTERN = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
 
 interface ListFilesRequest {
+    q?: unknown;
     ownerSubject?: unknown;
     limit?: unknown;
     cursor?: unknown;
@@ -61,7 +64,8 @@ async function readJsonBody(request: Request): Promise<ListFilesRequest | null> 
     }
 }
 
-function decodeCursor(value: unknown): FilePagePosition | null | undefined {
+type SearchCursor=FilePagePosition&{searchFingerprint?:string};
+function decodeCursor(value: unknown): SearchCursor | null | undefined {
     if (value === undefined || value === null || value === "") return null;
     if (typeof value !== "string" || value.length > 512 || !/^[A-Za-z0-9_-]+$/.test(value)) return undefined;
 
@@ -69,24 +73,26 @@ function decodeCursor(value: unknown): FilePagePosition | null | undefined {
         const parsed: unknown = JSON.parse(Buffer.from(value, "base64url").toString("utf8"));
         if (!parsed || typeof parsed !== "object") return undefined;
 
-        const cursor = parsed as { createdAt?: unknown; fileId?: unknown };
+        const cursor = parsed as { createdAt?: unknown; fileId?: unknown; searchFingerprint?:unknown };
         if (typeof cursor.createdAt !== "string" || typeof cursor.fileId !== "string" || !UUID_PATTERN.test(cursor.fileId)) {
             return undefined;
         }
 
         const createdAt = new Date(cursor.createdAt);
         if (!Number.isFinite(createdAt.getTime()) || createdAt.toISOString() !== cursor.createdAt) return undefined;
-        return { createdAt, fileId: cursor.fileId };
+        if(cursor.searchFingerprint!==undefined&&(typeof cursor.searchFingerprint!=='string'||!/^[a-f0-9]{64}$/.test(cursor.searchFingerprint)))return undefined;
+        return { createdAt, fileId: cursor.fileId,searchFingerprint:cursor.searchFingerprint as string|undefined };
     } catch {
         return undefined;
     }
 }
 
-function encodeCursor(position: FilePagePosition): string {
+function encodeCursor(position: SearchCursor): string {
     return Buffer.from(
         JSON.stringify({
             createdAt: position.createdAt.toISOString(),
             fileId: position.fileId,
+            ...(position.searchFingerprint?{searchFingerprint:position.searchFingerprint}:{}),
         }),
     ).toString("base64url");
 }
@@ -121,6 +127,11 @@ async function handlePOST(request: Request): Promise<Response> {
 
         const cursor = decodeCursor(body.cursor);
         if (cursor === undefined) return errorResponse("invalid_cursor", "cursor is invalid.", 400);
+        let q:string;
+        try{q=normalizeFileSearchQuery(body.q);}catch(error){
+            if(error instanceof InvalidFileSearchQuery)return errorResponse('invalid_search_query','q must be a string up to 200 characters and 10 whitespace-separated words.',400);
+            throw error;
+        }
         const folderId = body.folderId === undefined || body.folderId === null || body.folderId === "" ? undefined : body.folderId;
         if (folderId !== undefined && (typeof folderId !== "string" || !UUID_PATTERN.test(folderId))) {
             return errorResponse("invalid_folder_id", "folderId must be a UUID.", 400);
@@ -155,6 +166,12 @@ async function handlePOST(request: Request): Promise<Response> {
             );
         }
         const createdBefore = createdTo ? new Date(Date.parse(createdTo) + 86_400_000).toISOString() : undefined;
+        const searchFingerprint=q?createHash('sha256').update(JSON.stringify([
+            application.tenantId,application.applicationId,ownerSubject,[application.userId?'user':'api_key',application.userId??application.keyId],Boolean(application.isTenantAdmin),
+            accessibleDepartmentIds(application).sort(),q,folderId??null,departmentId??null,typeof tag==='string'?tag.trim():null,
+            typeof contentType==='string'?contentType.toLowerCase():null,createdFrom??null,createdBefore??null,
+        ])).digest('hex'):undefined;
+        if(cursor&&cursor.searchFingerprint!==searchFingerprint)return errorResponse('invalid_cursor','cursor does not match the search criteria. Start from the first page.',400);
 
         const listFiles = new ListFiles(new PostgresFileRepository());
         const rows = await listFiles.execute(
@@ -169,6 +186,7 @@ async function handlePOST(request: Request): Promise<Response> {
             limit + 1,
             cursor ?? undefined,
             {
+                q:q||undefined,
                 folderId: folderId as string | undefined,
                 departmentId: typeof departmentId === "string" ? departmentId : undefined,
                 tag: typeof tag === "string" ? tag.trim() : undefined,
@@ -181,7 +199,7 @@ async function handlePOST(request: Request): Promise<Response> {
         const hasMore = rows.length > limit;
         const items = hasMore ? rows.slice(0, limit) : rows;
         const last = items.at(-1);
-        const nextCursor = hasMore && last ? encodeCursor({ createdAt: last.createdAt, fileId: last.id }) : null;
+        const nextCursor = hasMore && last ? encodeCursor({ createdAt: last.createdAt, fileId: last.id,searchFingerprint }) : null;
 
         return Response.json({ data: { items, nextCursor } }, { headers: { "Cache-Control": "no-store" } });
     } catch (error) {

@@ -11,6 +11,8 @@ import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { DialogShell } from "@/components/ui/dialog-shell";
+import { Field,FieldDescription,FieldError,FieldGroup,FieldLabel } from "@/components/ui/field";
+import { normalizeFileSearchQuery } from "@/domain/files/file-search-query";
 import { Tabs } from "@base-ui/react/tabs";
 import { FileVersions } from "./file-versions";
 import { Building2, ChevronDown, ClipboardList, Download, FileText, FolderClosed, FolderOpen, HardDrive, KeyRound, LogOut, Plus, RefreshCw, Search, ShieldCheck, Trash2, Upload, UsersRound, X } from "lucide-react";
@@ -42,10 +44,10 @@ type KeyRow = {
 type Tab = "files" | "trash" | "keys" | "users" | "audit" | "storage";
 type UploadResult = { name: string; status: "pending" | "uploading" | "completed" | "partial" | "error"; message?: string; retryable?: boolean };
 type BatchIntent = { index: number; status: "ready" | "error"; fileId?: string; signedUrl?: string; error?: { message: string } };
-type FileFilters = { tag: string; contentType: string; createdFrom: string; createdTo: string };
+type FileFilters = { q:string;tag: string; contentType: string; createdFrom: string; createdTo: string };
 type Confirmation = { title: string; description: string; actionLabel: string; action: () => Promise<void>; destructive?: boolean };
 type Creation = "department" | "folder" | "invite" | null;
-const emptyFilters: FileFilters = { tag: "", contentType: "", createdFrom: "", createdTo: "" };
+const emptyFilters: FileFilters = { q:'',tag: "", contentType: "", createdFrom: "", createdTo: "" };
 
 const bangkokDate = new Intl.DateTimeFormat("th-TH-u-ca-gregory", {
     timeZone: "Asia/Bangkok",
@@ -90,6 +92,9 @@ export default function Home() {
     const [folderId, setFolderId] = useState("");
     const [folderPath, setFolderPath] = useState<Folder[]>([]);
     const [owner, setOwner] = useState("postman-test-user");
+    const [query,setQuery]=useState('');
+    const [queryError,setQueryError]=useState('');
+    const queryInput=useRef<HTMLInputElement>(null);
     const [tag, setTag] = useState("");
     const [contentType, setContentType] = useState("");
     const [createdFrom, setCreatedFrom] = useState("");
@@ -165,7 +170,9 @@ export default function Home() {
             const requestId = ++fileRequest.current;
             setFileLoading(true);
             setFileError("");
+            if(!cursor){setFiles([]);setFileCursor(null);}
             const payload: Record<string, unknown> = { ownerSubject: owner, limit: 25, cursor };
+            if(filters.q)payload.q=filters.q;
             if (selectedFolderId) payload.folderId = selectedFolderId;
             if (selectedDepartmentId) payload.departmentId = selectedDepartmentId;
             if (filters.tag.trim()) payload.tag = filters.tag.trim();
@@ -622,16 +629,29 @@ export default function Home() {
     }
 
     function applyFileFilters() {
+        let q:string;
+        try{q=normalizeFileSearchQuery(query);}catch{setQueryError('ค้นหาได้ไม่เกิน 200 ตัวอักษรและ 10 คำ โดยใช้ช่องว่างแบ่งคำ');queryInput.current?.focus();return;}
+        setQueryError('');setQuery(q);
         if (createdFrom && createdTo && createdFrom > createdTo) { setFileError("วันที่เริ่มต้นต้องไม่เกินวันที่สิ้นสุด"); return; }
-        const next = { tag, contentType, createdFrom, createdTo };
+        const next = { q,tag:tag.trim(), contentType:contentType.trim(), createdFrom, createdTo };
+        setFileCursor(null);
         setAppliedFilters(next);
         void search(folderId, departmentId, null, next).catch(() => {});
     }
 
     function clearFileFilters() {
+        setQuery('');setQueryError('');setFileCursor(null);
         setTag(""); setContentType(""); setCreatedFrom(""); setCreatedTo("");
         setAppliedFilters(emptyFilters);
         void search(folderId, departmentId, null, emptyFilters).catch(() => {});
+    }
+
+    function clearSearchQuery() {
+        setQuery('');setQueryError('');setFileCursor(null);
+        const next={...appliedFilters,q:''};
+        setAppliedFilters(next);
+        void search(folderId,departmentId,null,next).catch(()=>{});
+        queryInput.current?.focus();
     }
 
     function switchTab(next: Tab) {
@@ -646,6 +666,7 @@ export default function Home() {
     const canEditFile = (file: FileRow) => { const role = departments.find((item) => item.id === file.departmentId)?.role; return role === "admin" || role === "editor"; };
     const canAdminFile = (file: FileRow) => departments.find((item) => item.id === file.departmentId)?.role === "admin";
     const isGlobalFilesView = tab === "files" && !departmentId;
+    const visibleFolders=appliedFilters.q?[]:folders;
     const canViewStorage=scopes.includes('files:read')&&(isTenantAdmin||departments.some(item=>item.role==='admin'||item.role==='editor'));
 
     async function refreshCurrentView() {
@@ -820,10 +841,26 @@ export default function Home() {
                             </div>
                         </div>
                         {folderPath.length > 0 && <nav className="folder-breadcrumb" aria-label="เส้นทางโฟลเดอร์"><button onClick={() => void selectDepartment(departmentId)}>{selectedDepartment?.name ?? "หน่วยงาน"}</button>{folderPath.map((item) => <span key={item.id}> / <button aria-current={item.id === folderId ? "page" : undefined} onClick={() => void navigateToFolder(item.id)}>{item.name}</button></span>)}</nav>}
+                        <form className="file-keyword-form" onSubmit={event=>{event.preventDefault();applyFileFilters();}} noValidate>
+                            <FieldGroup><div className="file-keyword-row"><Field data-invalid={Boolean(queryError)}>
+                                <FieldLabel htmlFor="file-keyword">ค้นหาชื่อไฟล์หรือ tags</FieldLabel>
+                                <Input id="file-keyword" ref={queryInput} value={query} maxLength={200} placeholder="เช่น งบ 2569" aria-invalid={Boolean(queryError)}
+                                    aria-describedby={`file-keyword-help${queryError?' file-keyword-error':''}`} onChange={event=>{setQuery(event.target.value);setQueryError('');}}/>
+                            </Field><div className="file-keyword-actions"><Button type="submit"><Search data-icon="inline-start" aria-hidden="true"/>ค้นหา</Button>
+                                {(query||appliedFilters.q)&&<Button type="button" variant="outline" onClick={clearSearchQuery}>ล้างคำค้น</Button>}
+                                {Object.values(appliedFilters).some(Boolean)&&<Button type="button" variant="outline" onClick={clearFileFilters}>ล้างทั้งหมด</Button>}
+                            </div></div>
+                            <FieldDescription id="file-keyword-help">ค้นจากชื่อแสดงผล ชื่อไฟล์ปัจจุบัน และ tags · ต้องพบทุกคำ · ใช้ช่องว่างแบ่งคำ</FieldDescription>
+                            {queryError&&<FieldError id="file-keyword-error" role="alert">{queryError}</FieldError>}</FieldGroup>
+                        </form>
+                        <div className="file-search-summary" role="status" aria-live="polite" aria-atomic="true">
+                            {fileLoading?'กำลังค้นหาไฟล์…':fileError?'โหลดผลค้นหาไม่สำเร็จ':filesLoaded?`แสดง ${files.length} รายการ${fileCursor?' · ยังมีรายการเพิ่มเติม':''}`:'กำลังเตรียมรายการไฟล์'}
+                            {appliedFilters.q&&<span>คำค้นที่ใช้: <strong>{appliedFilters.q}</strong></span>}
+                        </div>
                         <div className="filter-toolbar">
                             <p><Search size={17} aria-hidden="true" /> {departmentId ? `รายการใน ${folderPath.at(-1)?.name ?? selectedDepartment?.name ?? "หน่วยงาน"}` : "รายการจากทุกหน่วยงาน"}</p>
                             <button className="secondary" aria-expanded={showFilters} onClick={() => setShowFilters((current) => !current)}>
-                                ตัวกรอง{Object.values(appliedFilters).filter(Boolean).length ? ` (${Object.values(appliedFilters).filter(Boolean).length})` : ""} <ChevronDown size={16} aria-hidden="true" />
+                                ตัวกรอง{Object.entries(appliedFilters).filter(([key,value])=>key!=='q'&&value).length ? ` (${Object.entries(appliedFilters).filter(([key,value])=>key!=='q'&&value).length})` : ""} <ChevronDown size={16} aria-hidden="true" />
                             </button>
                         </div>
                         {showFilters && <form className="filters advanced-filters" onSubmit={(event) => { event.preventDefault(); applyFileFilters(); }}>
@@ -831,7 +868,7 @@ export default function Home() {
                             <label>ชนิดไฟล์ (MIME)<input value={contentType} onChange={(e) => setContentType(e.target.value)} placeholder="เช่น application/pdf" /></label>
                             <label>วันที่เพิ่มตั้งแต่<input type="date" value={createdFrom} onChange={(e) => setCreatedFrom(e.target.value)} /></label>
                             <label>ถึงวันที่<input type="date" value={createdTo} min={createdFrom || undefined} onChange={(e) => setCreatedTo(e.target.value)} /></label>
-                            <div className="filter-actions"><button className="secondary" type="button" onClick={clearFileFilters}>ล้างตัวกรอง</button><button className="primary" type="submit">ใช้ตัวกรอง</button></div>
+                            <div className="filter-actions"><button className="secondary" type="button" onClick={clearFileFilters}>ล้างทั้งหมด</button><button className="primary" type="submit">ใช้ตัวกรอง</button></div>
                         </form>}
                         {uploadResults.length > 0 && (
                             <div className="upload-results" role="status" aria-live="polite">
@@ -870,7 +907,7 @@ export default function Home() {
                                     </tr>
                                 </thead>
                                 <tbody>
-                                    {folders.map((f) => (
+                                    {visibleFolders.map((f) => (
                                         <tr key={`f-${f.id}`}>
                                             <td>
                                                 <button className="filename" onClick={() => void navigateToFolder(f.id)}>
@@ -922,10 +959,10 @@ export default function Home() {
                                             </td>
                                         </tr>
                                     ))}
-                                    {!fileLoading && !fileError && filesLoaded && !files.length && !folders.length && (
+                                    {!fileLoading && !fileError && filesLoaded && !files.length && (!visibleFolders.length||Object.values(appliedFilters).some(Boolean)) && (
                                         <tr>
                                             <td colSpan={6} className="empty">
-                                                {Object.values(appliedFilters).some(Boolean) ? "ไม่พบไฟล์ที่ตรงกับตัวกรอง ลองล้างตัวกรอง" : departmentId ? "ยังไม่มีรายการในหน่วยงานหรือโฟลเดอร์นี้" : "ยังไม่มีไฟล์ในหน่วยงานที่คุณเข้าถึงได้"}
+                                                {Object.values(appliedFilters).some(Boolean) ? <><p>ไม่พบไฟล์ที่ตรงกับคำค้นหาหรือตัวกรอง</p><p>ลองใช้คำที่สั้นลง หรือล้างเงื่อนไขเพื่อดูรายการอีกครั้ง</p><Button variant="outline" onClick={clearFileFilters}>ล้างเงื่อนไขค้นหา</Button></> : departmentId ? "ยังไม่มีรายการในหน่วยงานหรือโฟลเดอร์นี้" : "ยังไม่มีไฟล์ในหน่วยงานที่คุณเข้าถึงได้"}
                                             </td>
                                         </tr>
                                     )}
