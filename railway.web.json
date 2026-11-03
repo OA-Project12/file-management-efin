@@ -2,7 +2,7 @@
   "$schema": "https://railway.com/railway.schema.json",
   "build": { "builder": "DOCKERFILE", "dockerfilePath": "Dockerfile" },
   "deploy": {
-    "startCommand": "exec node node_modules/next/dist/bin/next start --hostname 0.0.0.0",
+    "startCommand": "node node_modules/next/dist/bin/next start --hostname 0.0.0.0",
     "healthcheckPath": "/api/health/ready",
     "healthcheckTimeout": 300,
     "numReplicas": 1,

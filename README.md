@@ -17,7 +17,7 @@
 |---|---|---|
 | Dockerfile path | `/Dockerfile` (ตรวจ build logs ว่าใช้ Dockerfile) | เหมือนเว็บ |
 | Root directory | Repository root | Repository root |
-| Start command | `exec node node_modules/next/dist/bin/next start --hostname 0.0.0.0` | `exec node scripts/process-outbox.mjs` |
+| Start command | `node node_modules/next/dist/bin/next start --hostname 0.0.0.0` | `node scripts/process-outbox.mjs` |
 | Region / replicas | Singapore / 1 | Singapore / 1 |
 | Serverless | ปิด | ปิด |
 | Restart policy / retries | On Failure / 10 | On Failure / 10 |
@@ -29,6 +29,8 @@
 ทั้งสองใช้ Dockerfile เดียว ไม่ต้องมี Railway database หรือ Volume ตรวจรายการ staged changes ก่อนกด Deploy และตรวจค่าจาก Settings อีกครั้งหลังบันทึก โดยต้องมี Dockerfile path ที่ถูกต้องและ build logs ยืนยัน Dockerfile detection
 
 สำหรับ Railway CLI/Public API รุ่นที่ใช้ตรวจ (CLI 5.71.0) enum `Builder` มี `RAILPACK` แต่ไม่มี `DOCKERFILE` จึงคง builder ที่ API รองรับและตั้ง `dockerfilePath=/Dockerfile` ให้ระบบตรวจพบไฟล์ โดยยึด build logs เป็นหลักฐานว่าใช้ Dockerfile จริง ไม่ส่งค่า `DOCKERFILE` เข้า GraphQL enum โดยตรง
+
+Start Command ของ Docker deployment ถูกเรียกแบบ exec form จึงใช้ `node ...` โดยตรง ไม่ใส่ `exec` นำหน้าเหมือน shell script (`exec` ไม่ใช่ executable ใน image) และไม่ต้องขยาย `$PORT` ใน command เพราะ Next.js อ่าน environment เอง ดู [Railway Start Command](https://docs.railway.com/deployments/start-command)
 
 ### ทางเลือกส่ง release ด้วย CLI (เลือกใช้กับ EFIN DMS รอบนี้)
 
