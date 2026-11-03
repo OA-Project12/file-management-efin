@@ -6,12 +6,41 @@
 
 ### ไฟล์และ configuration
 
-| Service | Config file path ใน Railway Settings | หน้าที่ |
+| Service | ไฟล์อ้างอิงค่า Settings | หน้าที่ |
 |---|---|---|
 | `efin-dms-web` | `/railway.web.json` | Next.js UI/API, HTTPS, healthcheck `/api/health/ready` |
 | `efin-dms-worker` | `/railway.worker.json` | Outbox/cleanup/audit retention; ไม่มี public domain |
 
-ทั้งสองใช้ Dockerfile เดียว, Singapore, 1 replica, ปิด sleep และ restart เมื่อ process ล้มเหลว Root directory คือ repository root เลือก config file ให้ตรง service ก่อน deploy; อย่าใช้ web healthcheck กับ worker ส่วน public domain และ GitHub autodeploy เป็นค่าบน Dashboard ไม่ได้ถูกสร้างโดย config files
+**ข้อจำกัดที่ยืนยันจาก Dashboard และเอกสาร Railway วันที่ 3 พฤศจิกายน 2569:** service ใหม่ไม่สามารถเปิดใช้ Config as Code เดิมได้แล้ว ไฟล์ `railway.web.json`/`railway.worker.json` ใน repository ใช้เป็นรายการอ้างอิงเท่านั้น **อย่าตั้ง Railway Config File path ให้ service ใหม่** ให้ตั้งค่าผ่าน Dashboard ตามตารางด้านล่าง รอบนี้ยังไม่ได้ติดตั้ง Railway IaC SDK หรือเปลี่ยน authentication สำหรับ CLI บริการ legacy ที่เปิด Config as Code ไว้แล้วใช้ได้ถึง 1 ธันวาคม 2569 เท่านั้น ดู [Railway Config as Code](https://docs.railway.com/config-as-code) และ [Infrastructure as Code](https://docs.railway.com/infrastructure-as-code)
+
+| Settings | เว็บ | Worker |
+|---|---|---|
+| Dockerfile path | `/Dockerfile` (ตรวจ build logs ว่าใช้ Dockerfile) | เหมือนเว็บ |
+| Root directory | Repository root | Repository root |
+| Start command | `exec node node_modules/next/dist/bin/next start --hostname 0.0.0.0` | `exec node scripts/process-outbox.mjs` |
+| Region / replicas | Singapore / 1 | Singapore / 1 |
+| Serverless | ปิด | ปิด |
+| Restart policy / retries | On Failure / 10 | On Failure / 10 |
+| Healthcheck / timeout | `/api/health/ready` / 300 วินาที | ไม่ตั้ง HTTP healthcheck |
+| Teardown overlap / draining | 0 / 60 วินาที | 0 / 120 วินาที |
+| Public domain | Railway HTTPS domain | ไม่สร้าง |
+| GitHub branch / autodeploy | `codex/railway-cloud-test` / ปิด | เหมือนเว็บ |
+
+ทั้งสองใช้ Dockerfile เดียว ไม่ต้องมี Railway database หรือ Volume ตรวจรายการ staged changes ก่อนกด Deploy และตรวจค่าจาก Settings อีกครั้งหลังบันทึก โดยต้องมี Dockerfile path ที่ถูกต้องและ build logs ยืนยัน Dockerfile detection
+
+สำหรับ Railway CLI/Public API รุ่นที่ใช้ตรวจ (CLI 5.71.0) enum `Builder` มี `RAILPACK` แต่ไม่มี `DOCKERFILE` จึงคง builder ที่ API รองรับและตั้ง `dockerfilePath=/Dockerfile` ให้ระบบตรวจพบไฟล์ โดยยึด build logs เป็นหลักฐานว่าใช้ Dockerfile จริง ไม่ส่งค่า `DOCKERFILE` เข้า GraphQL enum โดยตรง
+
+### ทางเลือกส่ง release ด้วย CLI (เลือกใช้กับ EFIN DMS รอบนี้)
+
+Railway บัญชี `efinbackend` เชื่อม GitHub เป็น `efinbackend` ส่วน repository เป็นของ `OA-Project12` และ Railway App ฝั่ง OA-Project12 มีสิทธิ์ repository แล้ว ผู้ใช้เลือกส่ง source ด้วย CLI เพื่อคง GitHub integration เดิม การ deploy รอบนี้จึงไม่ผูก GitHub source/autodeploy
+
+- ใช้ Railway CLI ทางการ `@railway/cli` ซึ่งติดตั้งใน `.quota-reports/railway-cli` และเข้าสู่บัญชีเดิม ไม่แก้ dependencies ของแอป
+- Project ID: `0f2d2814-12e7-4bd6-a6f6-1459a87a93f4`; environment ID: `6f2d7ed8-cab0-4ebc-a6b8-3078d62a3fbf` (ชื่อ Railway คือ `production` แต่ยังใช้เพื่อ cloud test)
+- Web service ID: `95cbfca8-1361-4a06-8b06-4f973445885f`; worker service ID: `d98fba63-16c5-478d-9dd6-20983dc210e4`
+- สร้าง source directory จาก `git archive` ของ release commit เท่านั้น ตรวจไม่มี `.env*`, secrets หรือรายงาน แล้วส่งด้วย `railway up <release-directory> --path-as-root --project <PROJECT_ID> --environment <ENVIRONMENT_ID> --service <SERVICE_ID> --detach --message <RELEASE_SHA>` แยกทั้งสอง service
+- `up --detach` หมายถึงเริ่ม deploy แล้ว ไม่ใช่ตรวจว่าพร้อมใช้งาน ต้องตาม deployment status/build logs/healthcheck ต่อจนสำเร็จ
+- เว็บกำหนด `PORT=3000` ให้ตรง target port ของ Railway domain และใช้ `AUTH_INVITE_REDIRECT_URL=https://efin-dms-web-production.up.railway.app/set-password` ต้องเพิ่ม exact Redirect URL ใน Supabase ก่อนทดสอบคำเชิญ
+- เริ่มเว็บด้วย maintenance เปิดไว้เพื่ออ่าน/ตรวจ health ก่อน ส่วน worker จะเริ่มหลังหยุด local worker และตรวจงานค้างแล้วเท่านั้น การสร้าง empty worker/ตั้ง Variables ไม่ได้เริ่มประมวลผลงาน
 
 Docker ใช้ Node 24, `npm ci`, webpack production build และ production dependencies รันด้วยผู้ใช้ `node` คำสั่งเว็บใช้ `PORT` ที่ Railway ส่งมาและ bind `0.0.0.0` worker ใช้ `node scripts/process-outbox.mjs` จึงไม่ต้องมี `.env.local` คำสั่ง npm สำหรับ local ยังทำงานเหมือนเดิม
 
@@ -50,10 +79,10 @@ docker run --rm --name efin-dms-web-test -p 127.0.0.1:3018:3000 --env-file .quot
 
 1. ยืนยัน backup/จุดกู้คืนของ Supabase ที่มีอยู่ก่อน หากยังยืนยันไม่ได้ให้คงการทดสอบ cloud แบบอ่านอย่างเดียว บันทึก release commit และค่าตั้งต้นของ services โดยไม่บันทึก secret ลง Git
 2. รวมโค้ด UI และ deployment files ที่ตรวจแล้วเข้า release commit เดียวบน GitHub เก็บการแก้เดิมทั้งหมด ไม่ต้องนำ `.env.local`, reports, `docs`, `supabase`, `postman`, `prototype` หรือ `.agents` ขึ้น Git
-3. ใน project **EFIN DMS** สร้าง web จาก `OA-Project12/file-management-efin` เลือก config path/Variables และปิด automatic deployments Deploy commit ที่เลือกด้วยตนเอง แล้วสร้าง Railway HTTPS domain ตรวจ healthcheck/login/รายการไฟล์ก่อน
+3. ใน project **EFIN DMS** สร้าง web จาก `OA-Project12/file-management-efin` ตั้ง Service Settings ตามตารางและ Variables แล้วปิด automatic deployments ถ้าค้นหา repository ไม่พบต้องให้ Railway GitHub App เข้าถึงเฉพาะ repository นี้ก่อน อย่าใช้ repository ชื่อใกล้เคียงแทน Deploy commit ที่เลือกด้วยตนเอง แล้วสร้าง Railway HTTPS domain ตรวจ healthcheck/login/รายการไฟล์ก่อน
 4. ตั้ง `AUTH_INVITE_REDIRECT_URL=https://<railway-domain>/set-password` เพิ่ม exact URL ใน Supabase Auth Redirect URLs และตรวจ email template ว่าใช้ redirect ที่ส่งมา เก็บ localhost และ Site URL/กติกาสมัครสมาชิกเดิมไว้ในรอบ cloud test
 5. ทดสอบเชิญ/ตั้งรหัสผ่านด้วยบัญชีทดสอบ Default SMTP ของ Supabase ส่งได้เฉพาะอีเมลที่ระบบอนุญาต ถ้าจะเชิญบุคคลทั่วไปต้องตั้ง custom SMTP ก่อน ไม่เปลี่ยน SMTP หรือสร้างบัญชีใหม่โดยไม่ระบุผู้ให้บริการ/ผู้รับ
-6. หยุด local worker ที่ใช้ Supabase เดียวกันก่อนเปิด cloud worker ตรวจงานค้าง/cleanup ที่ถึงกำหนด เพราะ worker จะทำงานกับข้อมูลเดิมทั้ง application ไม่ได้จำกัดเฉพาะไฟล์ทดสอบ สร้าง worker service/config/Variables โดยไม่เพิ่ม public domain แล้ว deploy release commit เดียวกับเว็บ
+6. หยุด local worker ที่ใช้ Supabase เดียวกันก่อนเปิด cloud worker ตรวจงานค้าง/cleanup ที่ถึงกำหนด เพราะ worker จะทำงานกับข้อมูลเดิมทั้ง application ไม่ได้จำกัดเฉพาะไฟล์ทดสอบ สร้าง worker service/Settings/Variables ตามตารางโดยไม่เพิ่ม public domain แล้ว deploy release commit เดียวกับเว็บ
 7. รัน read-only preflight จาก runtime บน Railway อีกครั้งเพื่อบันทึก latency/สิทธิ์จริง เปิด logs ตรวจ outbox retry, cleanup และ audit retention ไม่เรียก retention function เองเพื่อทดสอบ
 8. ทดสอบ upload/complete, preview/download, metadata, versions/restore, trash/restore/purge, Audit และ quota ด้วยไฟล์ทดสอบที่ระบุไว้ ตรวจ restart/redeploy แล้วข้อมูลยังอยู่บน Supabase
 
