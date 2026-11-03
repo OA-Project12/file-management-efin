@@ -1,66 +1,151 @@
 "use client";
-
-import { useState } from "react";
+import Link from "next/link";
+import { useEffect, useRef, useState, type FormEvent } from "react";
 import { useRouter } from "next/navigation";
 import { getBrowserAuth } from "@/lib/browser-auth";
-import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
-
+import { Notice } from "@/components/dms/common";
+import {
+  NavigationGuardProvider,
+  useUnsavedChanges,
+} from "@/components/dms/navigation-guard";
 export default function SetPasswordPage() {
-    const router = useRouter();
-    const [password, setPassword] = useState("");
-    const [showPassword, setShowPassword] = useState(false);
-    const [message, setMessage] = useState("");
-    const [busy, setBusy] = useState(false);
-
-    async function submit(event: React.FormEvent<HTMLFormElement>) {
-        event.preventDefault();
-        if (password.length < 12) {
-            setMessage("รหัสผ่านต้องมีอย่างน้อย 12 ตัวอักษร");
-            return;
-        }
-        setBusy(true);
-        try {
-            const auth = getBrowserAuth().auth;
-            const {
-                data: { session },
-            } = await auth.getSession();
-            if (!session) throw new Error("ลิงก์เชิญหมดอายุหรือไม่ถูกต้อง กรุณาขอคำเชิญใหม่");
-            const { error } = await auth.updateUser({ password });
-            if (error) throw error;
-            router.push("/");
-        } catch (error) {
-            setMessage(error instanceof Error ? error.message : "ตั้งรหัสผ่านไม่สำเร็จ");
-        } finally {
-            setBusy(false);
-        }
+  return (
+    <NavigationGuardProvider>
+      <SetPassword />
+    </NavigationGuardProvider>
+  );
+}
+function SetPassword() {
+  const router = useRouter();
+  const [password, setPassword] = useState(""),
+    [show, setShow] = useState(false),
+    [phase, setPhase] = useState<"checking" | "valid" | "invalid">("checking"),
+    [message, setMessage] = useState(""),
+    [busy, setBusy] = useState(false);
+  const input = useRef<HTMLInputElement>(null),
+    lock = useRef(false);
+  useUnsavedChanges(Boolean(password), busy);
+  useEffect(() => {
+    let active = true;
+    void Promise.resolve()
+      .then(() => getBrowserAuth().auth.getSession())
+      .then(({ data: { session } }) => {
+        if (active) setPhase(session ? "valid" : "invalid");
+      })
+      .catch(() => {
+        if (active) setPhase("invalid");
+      });
+    return () => {
+      active = false;
+    };
+  }, []);
+  async function submit(event: FormEvent) {
+    event.preventDefault();
+    if (lock.current) return;
+    if (password.length < 12) {
+      setMessage("รหัสผ่านต้องมีอย่างน้อย 12 ตัวอักษร");
+      input.current?.focus();
+      return;
     }
-
-    return (
-        <main className="login">
-            <div className="login-visual"><div className="login-wordmark">EFIN</div><div><h2>เอกสารที่สำคัญ<br />อยู่ในที่ที่ใช่</h2><p>จัดเก็บ ค้นหา และทำงานร่วมกันได้อย่างมั่นใจในทุกหน่วยงาน</p></div><small>EFIN DMS · Document Management System</small></div>
-            <div className="login-main"><form className="login-card" onSubmit={submit}>
-                    <p>ยินดีต้อนรับสู่ EFIN DMS</p>
-                    <h1>ตั้งรหัสผ่าน</h1>
-                    <p>ตั้งรหัสผ่านสำหรับบัญชีที่ได้รับคำเชิญ</p>
-                    <label>
-                        รหัสผ่านใหม่
-                        <Input
-                            type={showPassword ? "text" : "password"}
-                            value={password}
-                            onChange={(event) => setPassword(event.target.value)}
-                            autoComplete="new-password"
-                            minLength={12}
-                            required
-                        />
-                    </label>
-                    <p className="form-help">ใช้รหัสผ่านอย่างน้อย 12 ตัวอักษร สามารถวางจากตัวจัดการรหัสผ่านได้</p>
-                    <button className="password-toggle" type="button" aria-pressed={showPassword} onClick={() => setShowPassword((current) => !current)}>{showPassword ? "ซ่อนรหัสผ่าน" : "แสดงรหัสผ่าน"}</button>
-                    {message && <div className="notice" role="alert">{message}</div>}
-                    <Button className="primary" disabled={busy}>
-                        {busy ? "กำลังบันทึก…" : "ตั้งรหัสผ่าน"}
-                    </Button>
-                </form></div>
-        </main>
-    );
+    lock.current = true;
+    setBusy(true);
+    setMessage("");
+    let updated = false;
+    try {
+      const auth = getBrowserAuth().auth;
+      const {
+        data: { session },
+      } = await auth.getSession();
+      if (!session) {
+        setPhase("invalid");
+        return;
+      }
+      const { error } = await auth.updateUser({ password });
+      if (error) throw error;
+      updated = true;
+      const response = await fetch("/api/v1/me", {
+        headers: { Authorization: `Bearer ${session.access_token}` },
+        cache: "no-store",
+      });
+      if (!response.ok) {
+        setMessage(
+          "ตั้งรหัสผ่านแล้ว แต่บัญชีนี้ยังเข้าถึงพื้นที่เอกสารนี้ไม่ได้ โปรดติดต่อผู้ดูแล",
+        );
+        setPassword("");
+        return;
+      }
+      setPassword("");
+      router.replace("/");
+    } catch {
+      setMessage(
+        updated
+          ? "ตั้งรหัสผ่านแล้ว แต่ตรวจสิทธิ์ไม่สำเร็จ กรุณากลับไปเข้าสู่ระบบหรือติดต่อผู้ดูแล"
+          : "ตั้งรหัสผ่านไม่สำเร็จ กรุณาตรวจเครือข่ายแล้วลองใหม่",
+      );
+      if (updated) setPassword("");
+    } finally {
+      lock.current = false;
+      setBusy(false);
+    }
+  }
+  return (
+    <main className="auth-page">
+      <section className="auth-card">
+        <div className="brand">
+          <span className="brand-mark">E</span>
+          <span>
+            EFIN <strong>DMS</strong>
+          </span>
+        </div>
+        <h1>ตั้งรหัสผ่าน</h1>
+        {phase === "checking" ? (
+          <p role="status">กำลังตรวจสอบคำเชิญ…</p>
+        ) : phase === "invalid" ? (
+          <>
+            <Notice tone="warning">
+              ลิงก์คำเชิญนี้ใช้ไม่ได้หรือหมดอายุ
+              โปรดติดต่อผู้ดูแลเพื่อขอคำเชิญใหม่
+            </Notice>
+            <Link className="secondary" href="/">
+              กลับไปเข้าสู่ระบบ
+            </Link>
+          </>
+        ) : (
+          <form onSubmit={submit} noValidate>
+            <p className="muted">ใช้รหัสผ่านอย่างน้อย 12 ตัวอักษร</p>
+            <label htmlFor="new-password">
+              รหัสผ่านใหม่
+              <Input
+                id="new-password"
+                ref={input}
+                type={show ? "text" : "password"}
+                autoComplete="new-password"
+                minLength={12}
+                required
+                disabled={busy}
+                value={password}
+                onChange={(e) => setPassword(e.target.value)}
+                aria-invalid={Boolean(message && password.length < 12)}
+                aria-describedby="password-help"
+              />
+            </label>
+            <small id="password-help">สามารถวางจากตัวจัดการรหัสผ่านได้</small>
+            <button
+              type="button"
+              className="quiet"
+              aria-pressed={show}
+              onClick={() => setShow(!show)}
+            >
+              {show ? "ซ่อนรหัสผ่าน" : "แสดงรหัสผ่าน"}
+            </button>
+            {message && <Notice tone="danger">{message}</Notice>}
+            <button className="primary" disabled={busy}>
+              {busy ? "กำลังบันทึก…" : "บันทึกรหัสผ่าน"}
+            </button>
+          </form>
+        )}
+      </section>
+    </main>
+  );
 }

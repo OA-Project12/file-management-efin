@@ -1,78 +1,361 @@
 :root {
-  --quota-warning: #765512;
-  --quota-warning-bg: #fff7e3;
+  --quota-warning: #854d0e;
+  --quota-warning-bg: #fffbeb;
   --quota-danger-bg: #fff0f2;
 }
-.quota-page {display:flex;flex-direction:column;gap:24px;min-width:0;padding-bottom:28px}
-.quota-page .heading {margin:0;gap:20px}
-.quota-page .overline {margin:0 0 6px;color:var(--primary);font-size:12px;font-weight:600;letter-spacing:.12em}
-.quota-page [data-slot=alert] {padding:16px;line-height:1.65}
-.quota-page [data-slot=alert-description] {color:var(--text-muted)}
-.quota-page [data-slot=alert][data-variant=destructive] [data-slot=alert-description] {color:var(--destructive)}
-.quota-toolbar {display:flex;align-items:flex-end;justify-content:space-between;gap:24px}
-.quota-toolbar>[data-slot=field] {max-width:320px}
-.quota-updated,.quota-capacity small {font-size:12px;color:var(--text-muted)}
-.quota-updated {margin:0;min-height:24px}
-.quota-page select,.quota-dialog select {min-height:44px;padding:9px 32px 9px 12px;border:1px solid var(--input);border-radius:10px;background:var(--card);color:var(--ink);width:100%;max-width:100%}
-.quota-legend {display:flex;flex-wrap:wrap;gap:20px;font-size:12px;color:var(--text-muted);margin-bottom:-12px}
-.quota-legend>span {display:inline-flex;align-items:center;gap:8px}
-.quota-legend i {display:inline-block;width:12px;height:12px;border-radius:3px}
-.quota-used {background:var(--primary)}
-.quota-reserved {background:repeating-linear-gradient(135deg,var(--text-muted) 0,var(--text-muted) 3px,var(--muted) 3px,var(--muted) 5px)}
-.quota-desktop {border:1px solid var(--line);background:var(--card);border-radius:16px;overflow:hidden}
-.quota-table {width:100%;table-layout:fixed;border-collapse:collapse;font-size:13px}
-.quota-table th,.quota-table td {padding:20px 14px;text-align:left;border-bottom:1px solid var(--line);vertical-align:top}
-.quota-table thead th {background:var(--canvas);color:var(--text-muted);font-size:12px;font-weight:500;padding-top:14px;padding-bottom:14px}
-.quota-table th:first-child {width:34%;padding-left:22px}
-.quota-table th:last-child {width:140px}
-.quota-table tbody tr:last-child>* {border-bottom:0}
-.quota-name {display:block;overflow-wrap:anywhere;word-break:normal}
-.quota-capacity {display:flex;flex-direction:column;align-items:flex-start;gap:10px;margin-top:12px;max-width:100%}
-.quota-capacity small {line-height:1.5;overflow-wrap:anywhere}
-.quota-number {font-variant-numeric:tabular-nums;overflow-wrap:anywhere}
-.quota-status {white-space:normal;text-align:left}
-.quota-status.quota-normal,.quota-status.quota-unlimited {background:var(--accent);color:var(--primary);border-color:var(--line)}
-.quota-status.quota-warning {background:var(--quota-warning-bg);color:var(--quota-warning);border-color:currentColor}
-.quota-status.quota-over,.quota-status.quota-full {background:var(--quota-danger-bg);color:var(--destructive);border-color:currentColor}
-.quota-status.quota-pending {background:var(--muted);color:var(--text-muted)}
-.quota-meter {width:100%;height:10px;display:flex;border-radius:5px;background:var(--muted);overflow:hidden}
-.quota-meter>span {height:100%;flex-shrink:0}
-.quota-mobile {display:none}
-.quota-loading {display:flex;flex-direction:column;gap:16px}
-.quota-dialog {min-width:0}
-.quota-dialog h2 {margin:0}
-.quota-dialog>p {color:var(--text-muted);margin:0}
-.quota-dialog-summary {display:flex;flex-wrap:wrap;gap:14px 24px;padding:16px;background:var(--canvas);border:1px solid var(--line);border-radius:12px;margin:0}
-.quota-dialog-summary div:last-child {flex-basis:100%}
-.quota-dialog-summary dt {color:var(--text-muted);font-size:12px;margin-bottom:4px}
-.quota-dialog-summary dd {margin:0;font-size:14px;overflow-wrap:anywhere}
-.quota-dialog form {min-width:0}
-.quota-dialog input:not([type=radio]) {min-height:44px}
-.quota-dialog [data-slot=field-error] {color:var(--destructive);font-size:13px}
-.quota-dialog fieldset {margin:0;padding:0;border:0;min-width:0}
-.quota-options {display:flex;gap:24px;flex-wrap:wrap}
-.quota-options label {display:flex;align-items:center;gap:10px;min-height:44px;width:auto;cursor:pointer}
-.quota-options input[type=radio] {width:18px;height:18px;min-height:0;accent-color:var(--primary)}
-.quota-amount-row {display:grid;grid-template-columns:minmax(0,1fr) 100px;align-items:start;gap:14px}
-.quota-preview {padding:16px;border:1px solid var(--line);border-radius:12px;background:var(--canvas);font-size:13px;overflow-wrap:anywhere}
-.quota-preview p {margin:8px 0 0;color:var(--text-muted)}
-.quota-dialog .dialog-actions {display:flex;justify-content:flex-end;gap:12px;margin-top:4px}
-@media(max-width:1000px) {
-  .quota-desktop {display:none}
-  .quota-mobile {display:flex;flex-direction:column;gap:16px}
-  .quota-card {padding:20px;border:1px solid var(--line);border-radius:16px;background:var(--card);min-width:0}
-  .quota-card h2 {font-size:17px;margin:0;overflow-wrap:anywhere}
-  .quota-card dl {display:grid;grid-template-columns:minmax(0,1fr) minmax(0,1fr);gap:16px;margin:20px 0}
-  .quota-card dt {font-size:12px;color:var(--text-muted);margin-bottom:6px}
-  .quota-card dd {margin:0;font-size:14px;overflow-wrap:anywhere}
-  .quota-card>button {width:100%}
+.quota-page {
+  display: flex;
+  flex-direction: column;
+  gap: 24px;
+  min-width: 0;
+  padding-bottom: 28px;
 }
-@media(max-width:720px) {
-  .quota-page {gap:20px;padding-bottom:40px}
-  .quota-page .heading {align-items:flex-start;flex-direction:column}
-  .quota-page .heading>button {align-self:flex-start}
-  .quota-toolbar {align-items:stretch;flex-direction:column;gap:10px}
-  .quota-toolbar>[data-slot=field] {max-width:none}
-  .quota-dialog .dialog-actions>button {flex:1}
-  .quota-dialog-summary {gap:12px}
+.quota-page .heading {
+  margin: 0;
+  gap: 20px;
+}
+.quota-page .overline {
+  margin: 0 0 6px;
+  color: var(--primary);
+  font-size: 13px;
+  font-weight: 600;
+  letter-spacing: 0.12em;
+}
+.quota-page [data-slot="alert"] {
+  padding: 16px;
+  line-height: 1.65;
+}
+.quota-page [data-slot="alert-description"] {
+  color: var(--text-muted);
+}
+.quota-page
+  [data-slot="alert"][data-variant="destructive"]
+  [data-slot="alert-description"] {
+  color: var(--destructive);
+}
+.quota-toolbar {
+  display: flex;
+  align-items: flex-end;
+  justify-content: space-between;
+  gap: 24px;
+}
+.quota-toolbar > [data-slot="field"] {
+  max-width: 320px;
+}
+.quota-updated,
+.quota-capacity small {
+  font-size: 13px;
+  color: var(--text-muted);
+}
+.quota-updated {
+  margin: 0;
+  min-height: 24px;
+}
+.quota-page select,
+.quota-dialog select {
+  min-height: 44px;
+  padding: 9px 32px 9px 12px;
+  border: 1px solid var(--input);
+  border-radius: 10px;
+  background: var(--card);
+  color: var(--ink);
+  width: 100%;
+  max-width: 100%;
+}
+.quota-legend {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 20px;
+  font-size: 13px;
+  color: var(--text-muted);
+  margin-bottom: -12px;
+}
+.quota-legend > span {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+}
+.quota-legend i {
+  display: inline-block;
+  width: 12px;
+  height: 12px;
+  border-radius: 3px;
+}
+.quota-used {
+  background: var(--primary);
+}
+.quota-reserved {
+  background: repeating-linear-gradient(
+    135deg,
+    var(--warning) 0,
+    var(--warning) 3px,
+    var(--muted) 3px,
+    var(--muted) 5px
+  );
+}
+.quota-desktop {
+  border: 1px solid var(--line);
+  background: var(--card);
+  border-radius: 16px;
+  overflow: hidden;
+}
+.quota-table {
+  width: 100%;
+  table-layout: fixed;
+  border-collapse: collapse;
+  font-size: 14px;
+}
+.quota-table th,
+.quota-table td {
+  padding: 20px 14px;
+  text-align: left;
+  border-bottom: 1px solid var(--line);
+  vertical-align: top;
+}
+.quota-table thead th {
+  background: var(--canvas);
+  color: var(--text-muted);
+  font-size: 13px;
+  font-weight: 500;
+  padding-top: 14px;
+  padding-bottom: 14px;
+}
+.quota-table th:first-child {
+  width: 34%;
+  padding-left: 22px;
+}
+.quota-table th:last-child {
+  width: 140px;
+}
+.quota-table tbody tr:last-child > * {
+  border-bottom: 0;
+}
+.quota-name {
+  display: block;
+  overflow-wrap: anywhere;
+  word-break: normal;
+}
+.quota-capacity {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: 10px;
+  margin-top: 12px;
+  max-width: 100%;
+}
+.quota-capacity small {
+  line-height: 1.5;
+  overflow-wrap: anywhere;
+}
+.quota-number {
+  font-variant-numeric: tabular-nums;
+  overflow-wrap: anywhere;
+}
+.quota-status {
+  white-space: normal;
+  text-align: left;
+}
+.quota-status.quota-normal,
+.quota-status.quota-unlimited {
+  background: var(--accent);
+  color: var(--primary);
+  border-color: var(--line);
+}
+.quota-status.quota-warning {
+  background: var(--quota-warning-bg);
+  color: var(--quota-warning);
+  border-color: currentColor;
+}
+.quota-status.quota-over,
+.quota-status.quota-full {
+  background: var(--quota-danger-bg);
+  color: var(--destructive);
+  border-color: currentColor;
+}
+.quota-status.quota-pending {
+  background: var(--muted);
+  color: var(--text-muted);
+}
+.quota-meter {
+  width: 100%;
+  height: 10px;
+  display: flex;
+  border-radius: 5px;
+  background: var(--muted);
+  overflow: hidden;
+}
+.quota-meter > span {
+  height: 100%;
+  flex-shrink: 0;
+}
+.quota-meter > .quota-reserved {
+  border-left: 2px solid white;
+}
+.quota-mobile {
+  display: none;
+}
+.quota-loading {
+  display: flex;
+  flex-direction: column;
+  gap: 16px;
+}
+.quota-dialog {
+  min-width: 0;
+}
+.quota-dialog h2 {
+  margin: 0;
+}
+.quota-dialog > p {
+  color: var(--text-muted);
+  margin: 0;
+}
+.quota-dialog-summary {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 14px 24px;
+  padding: 16px;
+  background: var(--canvas);
+  border: 1px solid var(--line);
+  border-radius: 12px;
+  margin: 0;
+}
+.quota-dialog-summary div:last-child {
+  flex-basis: 100%;
+}
+.quota-dialog-summary dt {
+  color: var(--text-muted);
+  font-size: 13px;
+  margin-bottom: 4px;
+}
+.quota-dialog-summary dd {
+  margin: 0;
+  font-size: 14px;
+  overflow-wrap: anywhere;
+}
+.quota-dialog form {
+  min-width: 0;
+}
+.quota-dialog input:not([type="radio"]) {
+  min-height: 44px;
+}
+.quota-dialog [data-slot="field-error"] {
+  color: var(--destructive);
+  font-size: 14px;
+}
+.quota-dialog fieldset {
+  margin: 0;
+  padding: 0;
+  border: 0;
+  min-width: 0;
+}
+.quota-options {
+  display: flex;
+  gap: 24px;
+  flex-wrap: wrap;
+}
+.quota-options label {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  min-height: 44px;
+  width: auto;
+  cursor: pointer;
+}
+.quota-options input[type="radio"] {
+  width: 18px;
+  height: 18px;
+  min-height: 0;
+  accent-color: var(--primary);
+}
+.quota-amount-row {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) 100px;
+  align-items: start;
+  gap: 14px;
+}
+.quota-preview {
+  padding: 16px;
+  border: 1px solid var(--line);
+  border-radius: 12px;
+  background: var(--canvas);
+  font-size: 13px;
+  overflow-wrap: anywhere;
+}
+.quota-preview p {
+  margin: 8px 0 0;
+  color: var(--text-muted);
+}
+.quota-dialog .dialog-actions {
+  display: flex;
+  justify-content: flex-end;
+  gap: 12px;
+  margin-top: 4px;
+}
+@media (max-width: 1000px) {
+  .quota-desktop {
+    display: none;
+  }
+  .quota-mobile {
+    display: flex;
+    flex-direction: column;
+    gap: 16px;
+  }
+  .quota-card {
+    padding: 20px;
+    border: 1px solid var(--line);
+    border-radius: 16px;
+    background: var(--card);
+    min-width: 0;
+  }
+  .quota-card h2 {
+    font-size: 17px;
+    margin: 0;
+    overflow-wrap: anywhere;
+  }
+  .quota-card dl {
+    display: grid;
+    grid-template-columns: minmax(0, 1fr) minmax(0, 1fr);
+    gap: 16px;
+    margin: 20px 0;
+  }
+  .quota-card dt {
+    font-size: 13px;
+    color: var(--text-muted);
+    margin-bottom: 6px;
+  }
+  .quota-card dd {
+    margin: 0;
+    font-size: 14px;
+    overflow-wrap: anywhere;
+  }
+  .quota-card > button {
+    width: 100%;
+  }
+}
+@media (max-width: 720px) {
+  .quota-page {
+    gap: 20px;
+    padding-bottom: 40px;
+  }
+  .quota-page .heading {
+    align-items: flex-start;
+    flex-direction: column;
+  }
+  .quota-page .heading > button {
+    align-self: flex-start;
+  }
+  .quota-toolbar {
+    align-items: stretch;
+    flex-direction: column;
+    gap: 10px;
+  }
+  .quota-toolbar > [data-slot="field"] {
+    max-width: none;
+  }
+  .quota-dialog .dialog-actions > button {
+    flex: 1;
+  }
+  .quota-dialog-summary {
+    gap: 12px;
+  }
 }

@@ -1,5 +1,147 @@
 # File Storage API
 
+## Railway: ทดสอบบนคลาวด์ใน project EFIN DMS
+
+ใช้ Supabase เดิมทั้ง Database/Auth/Storage จึงเป็นข้อมูลชุดเดียวกับ local งานนี้ไม่เพิ่ม schema และไม่ย้ายไฟล์เข้า Railway
+
+### ไฟล์และ configuration
+
+| Service | Config file path ใน Railway Settings | หน้าที่ |
+|---|---|---|
+| `efin-dms-web` | `/railway.web.json` | Next.js UI/API, HTTPS, healthcheck `/api/health/ready` |
+| `efin-dms-worker` | `/railway.worker.json` | Outbox/cleanup/audit retention; ไม่มี public domain |
+
+ทั้งสองใช้ Dockerfile เดียว, Singapore, 1 replica, ปิด sleep และ restart เมื่อ process ล้มเหลว Root directory คือ repository root เลือก config file ให้ตรง service ก่อน deploy; อย่าใช้ web healthcheck กับ worker ส่วน public domain และ GitHub autodeploy เป็นค่าบน Dashboard ไม่ได้ถูกสร้างโดย config files
+
+Docker ใช้ Node 24, `npm ci`, webpack production build และ production dependencies รันด้วยผู้ใช้ `node` คำสั่งเว็บใช้ `PORT` ที่ Railway ส่งมาและ bind `0.0.0.0` worker ใช้ `node scripts/process-outbox.mjs` จึงไม่ต้องมี `.env.local` คำสั่ง npm สำหรับ local ยังทำงานเหมือนเดิม
+
+ใส่ Railway Variables ตาม `railway.variables.example` ซึ่งมีเฉพาะ placeholder:
+
+- ทั้งสอง service: Supabase URL/secret, private bucket และค่า maintenance ตามตัวอย่าง ตั้ง database URL เฉพาะที่ service นั้นต้องใช้
+- **ทั้งสอง build** ต้องมี `NEXT_PUBLIC_SUPABASE_URL` และ `NEXT_PUBLIC_SUPABASE_PUBLISHABLE_KEY` เพราะ build image เดียวกัน แม้ worker ไม่ใช้ browser configuration ขณะรัน เปลี่ยนสองค่านี้ต้อง rebuild
+- เว็บ: `DATABASE_URL`, `AUTH_APPLICATION_ID`, `AUTH_INVITE_REDIRECT_URL`, `MAX_UPLOAD_SIZE_BYTES` worker: `WORKER_DATABASE_URL` และ alert webhook เดิมถ้ามี
+- Runtime secrets ไม่ถูกประกาศเป็น Docker ARG และไม่ต้องใช้ระหว่าง build; ห้ามส่ง `.env.local` ไป build context หรือ commit secrets
+- ใช้ Session Pooler พอร์ต 5432 กับ login สำหรับ `filesvc_api` และ `filesvc_worker` แยกกัน ไม่ใช้ `postgres` และ URL-encode password ส่วน pools ปัจจุบันใช้ได้สูงสุดเว็บ 5 + worker 2 connections ต่อชุด deployment ต้องเผื่อ local และ deployment ที่ซ้อนระหว่างเปลี่ยนรุ่นด้วย
+- ใช้ `sslmode=verify-full` และ CA ที่ตรวจแล้ว Linux path คือ `/app/certs/prod-ca-2021.crt`; image ตั้ง `NODE_EXTRA_CA_CERTS` ไว้ ห้ามใช้ Windows path, `NODE_TLS_REJECT_UNAUTHORIZED=0` หรือปิด `rejectUnauthorized` CA เป็น public certificate ไม่ใช่ private key แต่ต้องตรวจวันหมดอายุ/การหมุนเวียนก่อนปล่อยแต่ละครั้ง
+
+### Build และ preflight
+
+รันจาก PowerShell โดยใส่ **เฉพาะ public values** ใน process environment (อย่าใส่ server secret เป็น build arg):
+
+```powershell
+$env:NEXT_PUBLIC_SUPABASE_URL = 'https://<project-ref>.supabase.co'
+$env:NEXT_PUBLIC_SUPABASE_PUBLISHABLE_KEY = '<publishable-key>'
+docker build --build-arg NEXT_PUBLIC_SUPABASE_URL --build-arg NEXT_PUBLIC_SUPABASE_PUBLISHABLE_KEY -t efin-dms:railway-test .
+```
+
+สร้างไฟล์ variables แยก web/worker ไว้ในตำแหน่งที่ Git ignore โดยใช้ค่าจริงเฉพาะ runtime และ Linux certificate path Docker `--env-file` ใช้ `NAME=value` ไม่มี shell quoting หรือ variable expansion จากนั้นตรวจแบบอ่านอย่างเดียว:
+
+```powershell
+docker run --rm --env-file .quota-reports/railway-web.env efin-dms:railway-test node scripts/check-deployment.mjs web
+docker run --rm --env-file .quota-reports/railway-worker.env efin-dms:railway-test node scripts/check-deployment.mjs worker
+docker run --rm --name efin-dms-web-test -p 127.0.0.1:3018:3000 --env-file .quota-reports/railway-web.env efin-dms:railway-test
+# อีก terminal: Invoke-RestMethod http://127.0.0.1:3018/api/health/ready
+# หลังตรวจเสร็จ: docker stop efin-dms-web-test
+```
+
+`check-deployment.mjs` ตรวจ TLS, dedicated login/role, active application (web), outbox read/audit function privilege (worker) และ private bucket โดยไม่เริ่ม worker หรือแก้ข้อมูล ผล roundTripMs เป็นเวลาจากตำแหน่งที่รันสคริปต์ ไม่ใช่ latency จาก Railway ถ้าบucket ยังไม่มี size limit ต้องตรวจให้ตรงข้อจำกัด upload ก่อนเปิดให้ทีมทดสอบ
+
+### ลำดับ deploy
+
+1. ยืนยัน backup/จุดกู้คืนของ Supabase ที่มีอยู่ก่อน หากยังยืนยันไม่ได้ให้คงการทดสอบ cloud แบบอ่านอย่างเดียว บันทึก release commit และค่าตั้งต้นของ services โดยไม่บันทึก secret ลง Git
+2. รวมโค้ด UI และ deployment files ที่ตรวจแล้วเข้า release commit เดียวบน GitHub เก็บการแก้เดิมทั้งหมด ไม่ต้องนำ `.env.local`, reports, `docs`, `supabase`, `postman`, `prototype` หรือ `.agents` ขึ้น Git
+3. ใน project **EFIN DMS** สร้าง web จาก `OA-Project12/file-management-efin` เลือก config path/Variables และปิด automatic deployments Deploy commit ที่เลือกด้วยตนเอง แล้วสร้าง Railway HTTPS domain ตรวจ healthcheck/login/รายการไฟล์ก่อน
+4. ตั้ง `AUTH_INVITE_REDIRECT_URL=https://<railway-domain>/set-password` เพิ่ม exact URL ใน Supabase Auth Redirect URLs และตรวจ email template ว่าใช้ redirect ที่ส่งมา เก็บ localhost และ Site URL/กติกาสมัครสมาชิกเดิมไว้ในรอบ cloud test
+5. ทดสอบเชิญ/ตั้งรหัสผ่านด้วยบัญชีทดสอบ Default SMTP ของ Supabase ส่งได้เฉพาะอีเมลที่ระบบอนุญาต ถ้าจะเชิญบุคคลทั่วไปต้องตั้ง custom SMTP ก่อน ไม่เปลี่ยน SMTP หรือสร้างบัญชีใหม่โดยไม่ระบุผู้ให้บริการ/ผู้รับ
+6. หยุด local worker ที่ใช้ Supabase เดียวกันก่อนเปิด cloud worker ตรวจงานค้าง/cleanup ที่ถึงกำหนด เพราะ worker จะทำงานกับข้อมูลเดิมทั้ง application ไม่ได้จำกัดเฉพาะไฟล์ทดสอบ สร้าง worker service/config/Variables โดยไม่เพิ่ม public domain แล้ว deploy release commit เดียวกับเว็บ
+7. รัน read-only preflight จาก runtime บน Railway อีกครั้งเพื่อบันทึก latency/สิทธิ์จริง เปิด logs ตรวจ outbox retry, cleanup และ audit retention ไม่เรียก retention function เองเพื่อทดสอบ
+8. ทดสอบ upload/complete, preview/download, metadata, versions/restore, trash/restore/purge, Audit และ quota ด้วยไฟล์ทดสอบที่ระบุไว้ ตรวจ restart/redeploy แล้วข้อมูลยังอยู่บน Supabase
+
+ไม่รัน migration, bootstrap admin, create key, storage limits, quota backfill หรือ `--apply` ใน build/start/pre-deploy อัตโนมัติ ไม่ตั้ง finite quota ให้หน่วยงานจริงเพื่อทดสอบ
+
+### Maintenance, monitoring และ rollback
+
+`STORAGE_QUOTA_CONTROL_DIR=/tmp/efin-dms-quota` เป็นพื้นที่ชั่วคราวในแต่ละ container **ไม่แชร์** ระหว่างเว็บกับ worker และหายเมื่อสร้าง container ใหม่ ไม่ต้องเพิ่ม Railway Volume เพื่อเก็บไฟล์ผู้ใช้ เพราะอยู่บน Supabase อยู่แล้ว
+
+หากต้องใช้ quota `--apply` ให้หยุด direct writers และตั้ง `STORAGE_QUOTA_MAINTENANCE=1` แล้ว restart **ทุก** web/worker/local instance ที่ใช้ฐานข้อมูลเดียวกัน รอคำขอเดิมจบและยืนยันว่า worker ไม่ทำ cleanup/purge ค่อย apply จากผู้ปฏิบัติงานคนเดียว lock file ของ CLI ไม่ได้หยุด services บน host อื่น Signed upload URL เดิมยังส่งเข้า Storage ได้ จึงต้องคง reservation/ตรวจ snapshot ตามเครื่องมือเดิม เมื่อ reconcile ผ่านค่อยคืน flag เป็น `0` และ restart ทุก instance
+
+ตรวจ web health/logs, worker restarts, งาน outbox ที่ค้าง/ล้มเหลว และ audit retention ผ่านช่องทางปฏิบัติการเดิม Railway healthcheck ตรวจตอน deploy เท่านั้น ตั้ง external uptime monitor ที่ URL `/api/health/ready` ก่อนเปิดจริง โดยไม่ใส่ token ลง URL และไม่ส่ง secret/signed URL เข้า logs บันทึกผล smoke test ว่าผ่าน/ไม่ผ่าน/ยังไม่ได้ตรวจแยกกัน
+
+เมื่อจำเป็นต้อง rollback ให้ pause mutation/worker ตามผลกระทบ แล้ว deploy release ก่อนหน้าที่เข้ากันได้ทั้งเว็บและ worker ตรวจ public build variables, healthcheck และ outbox ก่อนคืนระบบ **rollback image ไม่กู้ไฟล์ที่ purge แล้วและไม่ย้อนข้อมูลที่แก้** รอบนี้ไม่มี schema migration จึงไม่มี migration rollback
+
+เอกสารอ้างอิง: [Railway Dockerfiles](https://docs.railway.com/builds/dockerfiles), [configuration](https://docs.railway.com/config-as-code/reference), [healthchecks](https://docs.railway.com/deployments/healthchecks), [Supabase connections](https://supabase.com/docs/guides/database/connecting-to-postgres), [Auth redirects](https://supabase.com/docs/guides/auth/redirect-urls), [SMTP](https://supabase.com/docs/guides/auth/auth-smtp)
+
+### ผลตรวจเตรียม deploy — 3 พฤศจิกายน 2569
+
+- ผ่าน: Docker Linux production build โดยไม่มี server secrets ตอน build, รันด้วย UID 1000, ไม่มี `.env.local` ใน image, maintenance directory เขียนได้ และ `PORT=8080`/bind `0.0.0.0` ทำงาน
+- ผ่าน: `/api/health/live` และ `/api/health/ready` จาก container; preflight เว็บ/worker ไปยัง Supabase เดิมผ่าน TLS ที่ตรวจ certificate แล้ว รวม role, active application, private bucket, outbox read และสิทธิ์เรียก audit retention (ไม่ได้เรียก function จริง)
+- ผ่าน: UI suites CURRENT/Search/Version/Quota บน Linux image ด้วย API/Auth/Storage จำลอง และตรวจ browser output 71 ไฟล์ไม่พบ runtime database URLs หรือ Supabase secret
+- ผ่าน: quota reconciliation แบบรายงานจาก Linux image ตรวจครบ 3 หน่วยงาน issues=0 โดยไม่มี `--apply` และไม่เปลี่ยนยอด รายงานอยู่ในโฟลเดอร์ Git ignore
+- Worker ตรวจการโหลด modules และปฏิเสธเริ่มงานเมื่อไม่มี configuration แล้ว ยังไม่ได้เริ่ม worker จริงเพื่อไม่ประมวลผลงานลบเดิมก่อนตรวจขั้นตอนเปิดระบบ
+- ยังไม่ได้ตรวจบน Railway: สร้าง project/services/domain, latency จาก Singapore, invitation ผ่าน Railway URL, live-role smoke tests, cloud worker และ restart/redeploy ขณะใช้ข้อมูลจริง ต้องมีบัญชี Railway ที่เชื่อมต่อก่อน ผล local/container ไม่ถือเป็นผล smoke test บน Railway
+
+## CURRENT design implementation
+
+The application implements the CURRENT screens and interactions from `design/MASTER.md` and `design/EFIN_DMS_UX_UI_SPEC.md`. The light Neutral + Teal theme, IBM Plex Sans Thai, controls, focus indicators and responsive layouts share semantic tokens. Active styles are `globals.css`, `dms.css` and the scoped version/quota styles; the legacy redesign and search styles are no longer imported.
+
+- File workspace, trash scope and storage filters are independent. Returning to files preserves the last workspace; **ไฟล์ทุกหน่วยงาน** explicitly clears its department/folder. Expanded navigation branches read immediate children through the existing folder API.
+- Desktop details use a 440px dock from 1312px; smaller widths use a modal sheet. Tablet navigation is a drawer; mobile has **ไฟล์ / ถังขยะ / เพิ่มเติม**, cards and full-screen forms. Unsaved changes require an explicit discard; active mutations/uploads block context changes.
+- Search retains applied/draft criteria, removable filter chips and cursor pagination. Preview/download only request URLs on user action; plain text renders as text. Dates display Thai Buddhist years in Asia/Bangkok, and audit wall-time filters explicitly convert UTC+7 independently of the browser timezone.
+- Upload queues distinguish sending, confirming, partial folder-move failure and unknown outcomes. Only pre-send retryable entries may start another upload. Version operation state belongs to the details owner so switching dock/sheet presentation does not abort a version upload.
+- Trash uses a queued receipt after purge; it does not claim physical deletion or released quota. Quotas retain exact-byte conversion, revision checks and separate used/reserved presentation.
+- Auth users, including Tenant Admins, still do not receive `keys:manage`. The conditional key UI preserves one-time secret acknowledgement and can only be exercised with an authorized identity; tests use a mocked management identity without adding a production entry point.
+
+There are no new backend endpoints, database migrations, scopes, sharing features, folder CRUD, bulk operations or deep links in this change. Existing API authorization remains authoritative. Drafts and one-time content grants stay in memory; the existing Supabase Auth session persistence is unchanged.
+
+UI validation uses a local **production build** and mocked Auth/API/Storage, without changing real users, documents or quotas:
+
+```powershell
+npm.cmd run build -- --webpack
+npm.cmd run start -- --port 3017 --hostname 127.0.0.1
+# In a second terminal:
+node --env-file=.env.local scripts/check-dms-design-ui.mjs
+node --env-file=.env.local scripts/check-file-search-ui.mjs
+node --env-file=.env.local scripts/check-version-ui.mjs
+node --env-file=.env.local scripts/check-quota-ui.mjs
+```
+
+The scripts use installed Chrome and the ignored Playwright runtime at `.quota-reports/ui-runtime/node_modules/playwright` (override `PLAYWRIGHT_MODULE` and each script's browser/URL variables when needed). The Browser plugin is not available in this environment, so validation uses Playwright/Chrome. Combined CURRENT scenarios and screenshots are written under `.quota-reports/design-ui/`; regression screenshots remain in their existing ignored locations. These scripts are development checks, not production startup dependencies.
+
+Automated coverage includes permission-dependent menus, workspace/trash navigation, explicit search and stale responses, responsive dock/sheet, keyboard dialogs and dirty drafts, safe text preview, metadata/move errors, multi-upload partial results, versions, invitations/member editing, audit timezone/details, quotas and conditional key UI. T01–T23 in the specification remain the acceptance checklist: mocked browser checks do not certify real screen-reader behavior, physical-device keyboard behavior, usability with employees or live-account integration. No real-account smoke test is claimed.
+
+Validation on 2026-11-03: TypeScript, lint and the webpack production build passed. All four UI scripts passed on that build. The combined suite covers 375/390/768/1024/1280/1440px and a 720px effective viewport at 2x device scale with reduced motion; this is a layout stress test, not a substitute for manual browser/text zoom and physical-device checks. Local results, screenshots and the T01–T23 coverage/remaining-check matrix are in `.quota-reports/design-ui/acceptance.md` (ignored by Git).
+
+## File name and metadata keyword search
+
+`POST /api/v1/files/search` accepts optional `q` together with all existing filters:
+
+```json
+{
+  "q": "งบ 2569",
+  "departmentId": "<DEPARTMENT_UUID>",
+  "limit": 25
+}
+```
+
+Auth users omit `ownerSubject`; API keys still must supply it. Identity, application, department membership and every restricted folder ancestor are checked exactly as before. Search only returns available files outside trash; it reads current `display_name`, current-version `original_name` cached on the document and `tags`. A document's display name/tags may intentionally remain unchanged when publishing a new version. Old version names, file contents, folder/department names and OCR text are not searched.
+
+All whitespace-separated terms must match, but can match different fields and different tags: `งบ 2569` matches a file named `งบการเงิน.pdf` tagged `2569`. Matching is case-insensitive and allows literal substrings in Thai/English. Whitespace is trimmed/collapsed; there is no automatic Thai word segmentation, stemming, fuzzy matching, Boolean syntax or phrase-quote syntax. `%`, `_`, backslash and quotes are treated as literal text, not caller-controlled SQL/wildcards. Existing `tag` remains an exact, case-sensitive filter in addition to keyword matching.
+
+An omitted/null/blank `q` preserves the old listing behavior. Other types, normalized values over 200 UTF-16 code units or more than 10 whitespace-separated terms return `400 invalid_search_query`. The existing 4096-byte request-body limit still applies. SQL uses parameters and literal `ILIKE` patterns; no keyword is inserted into SQL text or audit details.
+
+The response stays `{ "data": { "items": [...], "nextCursor": "..." } }` with `Cache-Control: no-store`, ordered by creation time descending then ID descending. Default page size is 25, maximum 100. Pass `nextCursor` back unchanged with the same applied keyword, filters and identity. Keyword cursors contain a SHA-256 fingerprint of the normalized criteria and authenticated scope (including user/API key ID); changing criteria/identity or supplying an old keyword-free cursor with a keyword returns `400 invalid_cursor`. Keyword-free clients retain legacy cursors. The fingerprint is a consistency check, not authorization or a signed token: every page still rechecks access. Results are not a transaction-wide snapshot; concurrent renames/moves/uploads can change membership, so start a new search to refresh.
+
+The file workspace has **ค้นหาชื่อไฟล์หรือ tags**, an explicit **ค้นหา** button/Enter and an indicator of the applied keyword. Typing alone makes no request. Search and **ใช้ตัวกรอง** apply the same draft keyword/filter values; **โหลดไฟล์เพิ่ม** and retry use applied criteria rather than unsent edits. **ล้างคำค้น** preserves applied metadata filters; **ล้างทั้งหมด** clears keyword/extra filters while retaining the current department/folder. Searching within a folder does not recurse into its children. Keyword results contain files only; the sidebar still allows folder navigation. New searches reset pagination, and stale responses cannot replace newer query/scope results. Loaded counts are not presented as total result counts.
+
+Search reads metadata directly, so metadata changes and successful version publication/restore are searchable immediately. This release adds no schema, extension, index, search service, extraction worker or backfill. It uses existing scoped listing indexes. A rollback-only fixture with 5,000 additional files measured approximately 209 ms for PostgreSQL execution on the initial test run (not end-to-end API latency or a performance guarantee); inspect the recorded EXPLAIN baseline before planning larger-scale indexing.
+
+```powershell
+node --env-file=.env.local scripts/check-file-search.mjs
+node --env-file=.env.local scripts/check-file-search-ui.mjs
+```
+
+The database check uses isolated TEMP tables and a TEMP copy of the existing folder-visibility function, rolls everything back, and prints EXPLAIN timings. It covers literal matching/injection, criteria-bound cursors, legacy clients, tenant/application/owner/folder isolation and current metadata. The UI check uses mocked Auth/APIs and Playwright with installed Chrome at 1440px/390px. It expects a running test server on `http://localhost:3017` (override `SEARCH_UI_URL`), and uses `PLAYWRIGHT_MODULE` / `SEARCH_UI_BROWSER` overrides or the same ignored test runtime as quota UI tests. Screenshots are saved to `.quota-reports/search-ui/`. Tests do not change real files or permissions.
+
 ## Department quota rollout — backfill and reconciliation
 
 New uploads (including batch), version uploads and version restores now reserve bytes and settle actual stored bytes in the same database transaction as their file/version changes and audit records. Completed retries do not charge twice. Requests denied for capacity return `409 department_quota_exceeded`; batch requests preserve the existing partial-success format with a per-file error code.

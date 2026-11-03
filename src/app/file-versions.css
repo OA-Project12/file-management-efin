@@ -222,56 +222,19 @@
   overflow-wrap: anywhere;
 }
 
-.modal-content:has(.version-preview-dialog) {
-  width: min(920px, calc(100vw - 32px));
-  max-height: 90dvh;
-  overflow: auto;
-}
-
 .version-preview-dialog {
   display: flex;
   flex-direction: column;
-  gap: 12px;
-  padding: 24px;
+  gap: 16px;
   min-width: 0;
 }
-
-.version-preview-dialog>div {
+.version-preview-dialog > div:first-child {
   display: flex;
   align-items: center;
   justify-content: space-between;
   gap: 12px;
 }
-
 .version-preview-dialog h2,
 .version-preview-dialog p {
   margin: 0;
-}
-
-.version-preview-dialog p {
-  color: var(--text-muted);
-  font-size: 14px;
-}
-
-.version-preview-dialog iframe {
-  border: 1px solid var(--line);
-  width: 100%;
-  height: 60dvh;
-  background: var(--card);
-}
-
-.version-preview-dialog img {
-  width: 100%;
-  height: 60dvh;
-  object-fit: contain;
-}
-
-@media(max-width:720px) {
-  .modal-content:has(.version-preview-dialog) {
-    width: calc(100vw - 20px);
-  }
-
-  .version-preview-dialog {
-    padding: 16px;
-  }
 }

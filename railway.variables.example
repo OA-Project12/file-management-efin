@@ -1,0 +1,23 @@
+# Reference only: enter values in Railway Variables, not this file.
+# BOTH services need these public values at BUILD time for the shared Dockerfile.
+NEXT_PUBLIC_SUPABASE_URL=https://<project-ref>.supabase.co
+NEXT_PUBLIC_SUPABASE_PUBLISHABLE_KEY=<publishable-key>
+
+# BOTH services, runtime only. Never define these as Docker ARGs.
+SUPABASE_URL=https://<project-ref>.supabase.co
+SUPABASE_SECRET_KEY=<server-only-secret>
+STORAGE_BUCKET=private-files
+NODE_EXTRA_CA_CERTS=/app/certs/prod-ca-2021.crt
+STORAGE_QUOTA_CONTROL_DIR=/tmp/efin-dms-quota
+STORAGE_QUOTA_MAINTENANCE=0
+
+# WEB ONLY: use a dedicated API login through Supabase Session Pooler.
+DATABASE_URL=postgresql://<api-login>.<project-ref>:<url-encoded-password>@<pooler-host>:5432/postgres?sslmode=verify-full
+AUTH_APPLICATION_ID=<existing-application-uuid>
+AUTH_INVITE_REDIRECT_URL=https://<railway-domain>/set-password
+MAX_UPLOAD_SIZE_BYTES=26214400
+
+# WORKER ONLY: different login, member of filesvc_worker.
+WORKER_DATABASE_URL=postgresql://<worker-login>.<project-ref>:<url-encoded-password>@<pooler-host>:5432/postgres?sslmode=verify-full
+# Optional existing operator alert destination; leave unset until configured.
+# AUDIT_ALERT_WEBHOOK_URL=<operator-webhook>
