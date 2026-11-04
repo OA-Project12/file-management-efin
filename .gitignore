@@ -47,7 +47,6 @@ yarn-error.log*
 # typescript
 *.tsbuildinfo
 next-env.d.ts
-tests
 playwright.config.mjs
 .gitleaks.toml
 eslint.config.mjs
