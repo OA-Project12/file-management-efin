@@ -109,6 +109,26 @@ test('guard returns bounded errors before mutation, retains signed URL audit fai
   const response = await url(new Request('http://fixture/api/v1/files/invalid/preview-url'));
   assert.equal(response.status,503); assert.ok(!(await response.text()).includes('never-log'));
 });
+test('guard rebuilds wrapped Request using public fields, preserving authorization and JSON', async () => {
+  const { securityRoute } = load('src/infrastructure/security/api-guard.ts');
+  const { authenticateApplicationKey } = load('src/infrastructure/auth/application-key-authenticator.ts');
+  const original = new Request('http://fixture/api/v1/files/search?fixture=1', {
+    method:'POST', body:JSON.stringify({q:'เอกสาร ทดสอบ'}),
+    headers:{Authorization:`Bearer ${key}`,'Content-Type':'application/json'},
+  });
+  // Framework wrappers expose Request fields without being a native Undici Request.
+  const wrapped = {url:original.url,method:original.method,headers:original.headers,body:original.body,signal:original.signal};
+  const route = securityRoute(async received => {
+    assert.equal(received.url,original.url);
+    assert.equal(received.method,'POST');
+    assert.equal((await authenticateApplicationKey(received)).keyId,keyId);
+    assert.deepEqual(await received.json(),{q:'เอกสาร ทดสอบ'});
+    return Response.json({data:{reachedHandler:true}});
+  });
+  const response = await route(wrapped);
+  assert.equal(response.status,200);
+  assert.equal((await response.json()).data.reachedHandler,true);
+});
 test('Redis unavailable blocks before authentication/mutation and health is outside the guard', async () => {
   const { securityRoute } = load('src/infrastructure/security/api-guard.ts');
   const url = process.env.REDIS_URL; await closeRedis(); process.env.REDIS_URL='redis://127.0.0.1:1';

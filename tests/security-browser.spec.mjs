@@ -33,6 +33,13 @@ test('security headers cover error routes and API responses', async ({ request }
     expect(response.headers()['permissions-policy']).toContain('camera=()');
   }
 });
+test('actual Next.js POST body passes the guard and reaches authentication', async ({ request }) => {
+  const response = await request.post('/api/v1/files/search', { data: {} });
+  expect(response.status()).toBe(401);
+  expect((await response.json()).error.code).toBe('unauthorized');
+  expect(response.headers()['x-request-id']).toBeTruthy();
+  expect(response.headers()['cache-control']).toBe('no-store');
+});
 
 function fixturePdf() {
   const objects = ['<< /Type /Catalog /Pages 2 0 R >>','<< /Type /Pages /Kids [3 0 R] /Count 1 >>',
