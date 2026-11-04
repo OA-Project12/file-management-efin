@@ -1,5 +1,11 @@
 # File Storage API
 
+### Security release preparation — 4 พฤศจิกายน 2569
+
+Tracked Playwright and Gitleaks configuration is required for clean-checkout CI. Release preflight passed: 18 security tests against disposable PostgreSQL/Redis, 4 browser security tests against a local production build using mocked services, TypeScript, lint and webpack production build. This includes the wrapped Next.js Request regression that previously returned 503 for JSON POST requests. These results do not replace team acceptance testing on Railway.
+
+Deploy web first and worker second from the same clean release commit using Railway CLI and their existing service-specific configuration paths. Keep `RATE_LIMIT_MODE=report`; this counts/reports excess requests but does not block them. Verify Redis from inside the deployed web container with a PING, independently of report-mode readiness. Record release/deployment IDs and the previous deployment IDs in an operator report without credentials. Do not enable enforce until the team confirms normal flows, ingress IP handling and limits. No schema migration or quota apply is part of this release.
+
 ## Security hardening — รอบแรก
 
 เพิ่ม guard กลางสำหรับ `/api/v1/*`, Redis token buckets, bounded JSON reader, timeouts, security headers และ structured logs โดยคงสิทธิ์และ API เดิม ไม่มี migration production

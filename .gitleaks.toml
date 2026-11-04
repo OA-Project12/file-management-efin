@@ -1,0 +1,14 @@
+[extend]
+useDefault = true
+
+[[rules]]
+id = "efin-application-key"
+description = "Complete EFIN DMS application key"
+regex = '''\bfsvc_[a-fA-F0-9]{12}\.[A-Za-z0-9_-]{43}'''
+keywords = ["fsvc_"]
+
+[[rules]]
+id = "supabase-server-secret"
+description = "Supabase server secret (publishable keys are public configuration)"
+regex = '''\bsb_secret_[A-Za-z0-9_-]{16,}'''
+keywords = ["sb_secret_"]
