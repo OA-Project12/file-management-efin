@@ -13,10 +13,8 @@
     "quota:backfill": "node --env-file=.env.local scripts/quota-maintenance.mjs backfill",
     "quota:reconcile": "node --env-file=.env.local scripts/quota-maintenance.mjs reconcile",
     "admin:bootstrap": "node --env-file=.env.local scripts/bootstrap-tenant-admin.mjs",
-    "fixtures:security": "node scripts/setup-security-fixtures.mjs",
+    "fixtures:security": "node tests/fixtures/setup.mjs",
     "test:security": "node --test tests/security.test.mjs tests/security-api.test.mjs",
-    "test:backend": "node scripts/run-security-checks.mjs backend",
-    "test:ui": "node scripts/run-security-checks.mjs ui",
     "test:security-browser": "playwright test"
   },
   "dependencies": {

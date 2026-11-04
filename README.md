@@ -60,12 +60,11 @@ $env:RATE_LIMIT_KEY_SECRET='synthetic-test-secret-at-least-32-characters'
 $env:RATE_LIMIT_MODE='report'
 npm.cmd run fixtures:security
 npm.cmd run test:security
-npm.cmd run test:backend
 ```
 
-fixtures:security ปฏิเสธ remote host และ database ที่ไม่ได้ชื่อ efin_security; ใช้ `tests/fixtures/schema.sql` ซึ่งเป็น schema จำลองสำหรับทดสอบเท่านั้น ไม่ใช่ migration/RLS proof ของ production ไม่รัน setup ซ้ำใน database เดิมที่มี schema แล้ว
+fixtures:security เรียก `tests/fixtures/setup.mjs` และปฏิเสธ remote host และ database ที่ไม่ได้ชื่อ efin_security; ใช้ `tests/fixtures/schema.sql` ซึ่งเป็น schema จำลองสำหรับทดสอบเท่านั้น ไม่ใช่ migration/RLS proof ของ production ไม่รัน setup ซ้ำใน database เดิมที่มี schema แล้ว
 
-UI ใช้ public configuration จำลอง build แล้วเปิด Next production server ที่ 127.0.0.1:3017 ติดตั้ง Chromium ด้วย `npx playwright install chromium`; รัน `npm run test:ui` และ `npm run test:security-browser` โดยตั้ง NEXT_PUBLIC_SUPABASE_URL=https://fixture.supabase.co และ NEXT_PUBLIC_SUPABASE_PUBLISHABLE_KEY=sb_publishable_fixture_only ทั้งตอน build และ tests Auth/Storage/APIs ใน flow ใช้ mocks ไม่อัปโหลดไฟล์จริง เก็บภาพ/ผลชั่วคราวใต้ .quota-reports ที่ Git ignore
+UI ใช้ public configuration จำลอง build แล้วเปิด Next production server ที่ 127.0.0.1:3017 ติดตั้ง Chromium ด้วย `npx playwright install chromium`; รัน `npm run test:security-browser` โดยตั้ง NEXT_PUBLIC_SUPABASE_URL=https://fixture.supabase.co และ NEXT_PUBLIC_SUPABASE_PUBLISHABLE_KEY=sb_publishable_fixture_only ทั้งตอน build และ tests Auth/Storage/APIs ใน flow ใช้ mocks ไม่อัปโหลดไฟล์จริง เก็บภาพ/ผลชั่วคราวใต้ .quota-reports ที่ Git ignore
 
 ก่อนเปิดเว็บจริง ทีมตรวจ login/invitation, text/image/PDF preview และ download, 429/Redis outage และ trusted client IP บน Railway การผ่าน fixtures ไม่แทนผลทดสอบนี้
 
@@ -74,7 +73,7 @@ UI ใช้ public configuration จำลอง build แล้วเปิด
 Runtime image ใช้ Node.js 24 แบบ minimal, รันด้วย user node และไม่มี npm/npx/Yarn ใน final stage คำสั่ง cloud ต้องใช้ node โดยตรง ย้าย shadcn CLI ไป devDependencies เพราะ component code ไม่ import CLI ตอน runtime
 
 
-`.github/workflows/security.yml` ทำ TypeScript/lint/build, backend/security/production UI tests ด้วย PostgreSQL/Redis ชั่วคราว, npm audit, Gitleaks full-history แบบ redact และ Trivy runtime image scan Actions และ scanner images pin SHA/digest ใช้ contents:read และไม่มี production secrets หรือ auto-deploy
+`.github/workflows/security.yml` ทำ TypeScript/lint/build, security API/unit tests และ production browser security tests ด้วย PostgreSQL/Redis ชั่วคราว, npm audit, Gitleaks full-history แบบ redact และ Trivy runtime image scan Actions และ scanner images pin SHA/digest ใช้ contents:read และไม่มี production secrets หรือ auto-deploy
 
 High/Critical dependency/image vulnerabilities และ secret findings ทำให้ CI fail รวม scanner/network error ด้วย ไม่เพิ่ม ignore กว้างหรือใช้ audit fix --force ข้อยกเว้นต้องระบุ advisory เหตุผล ผู้รับผิดชอบ และ expiry ผ่านการ review แยกต่างหาก Low/Moderate ยังต้องติดตามแม้ไม่เป็น blocking threshold รอบนี้
 
@@ -206,27 +205,11 @@ The application implements the CURRENT screens and interactions from `design/MAS
 - Search retains applied/draft criteria, removable filter chips and cursor pagination. Preview/download only request URLs on user action; plain text renders as text. Dates display Thai Buddhist years in Asia/Bangkok, and audit wall-time filters explicitly convert UTC+7 independently of the browser timezone.
 - Upload queues distinguish sending, confirming, partial folder-move failure and unknown outcomes. Only pre-send retryable entries may start another upload. Version operation state belongs to the details owner so switching dock/sheet presentation does not abort a version upload.
 - Trash uses a queued receipt after purge; it does not claim physical deletion or released quota. Quotas retain exact-byte conversion, revision checks and separate used/reserved presentation.
-- Auth users, including Tenant Admins, still do not receive `keys:manage`. The conditional key UI preserves one-time secret acknowledgement and can only be exercised with an authorized identity; tests use a mocked management identity without adding a production entry point.
+- Auth users, including Tenant Admins, still do not receive `keys:manage`. The conditional key UI preserves one-time secret acknowledgement and can only be exercised with an authorized identity; no production entry point was added for ordinary Auth sessions.
 
 There are no new backend endpoints, database migrations, scopes, sharing features, folder CRUD, bulk operations or deep links in this change. Existing API authorization remains authoritative. Drafts and one-time content grants stay in memory; the existing Supabase Auth session persistence is unchanged.
 
-UI validation uses a local **production build** and mocked Auth/API/Storage, without changing real users, documents or quotas:
-
-```powershell
-npm.cmd run build -- --webpack
-npm.cmd run start -- --port 3017 --hostname 127.0.0.1
-# In a second terminal:
-node --env-file=.env.local scripts/check-dms-design-ui.mjs
-node --env-file=.env.local scripts/check-file-search-ui.mjs
-node --env-file=.env.local scripts/check-version-ui.mjs
-node --env-file=.env.local scripts/check-quota-ui.mjs
-```
-
-The scripts use installed Chrome and the ignored Playwright runtime at `.quota-reports/ui-runtime/node_modules/playwright` (override `PLAYWRIGHT_MODULE` and each script's browser/URL variables when needed). The Browser plugin is not available in this environment, so validation uses Playwright/Chrome. Combined CURRENT scenarios and screenshots are written under `.quota-reports/design-ui/`; regression screenshots remain in their existing ignored locations. These scripts are development checks, not production startup dependencies.
-
-Automated coverage includes permission-dependent menus, workspace/trash navigation, explicit search and stale responses, responsive dock/sheet, keyboard dialogs and dirty drafts, safe text preview, metadata/move errors, multi-upload partial results, versions, invitations/member editing, audit timezone/details, quotas and conditional key UI. T01–T23 in the specification remain the acceptance checklist: mocked browser checks do not certify real screen-reader behavior, physical-device keyboard behavior, usability with employees or live-account integration. No real-account smoke test is claimed.
-
-Validation on 2026-11-03: TypeScript, lint and the webpack production build passed. All four UI scripts passed on that build. The combined suite covers 375/390/768/1024/1280/1440px and a 720px effective viewport at 2x device scale with reduced motion; this is a layout stress test, not a substitute for manual browser/text zoom and physical-device checks. Local results, screenshots and the T01–T23 coverage/remaining-check matrix are in `.quota-reports/design-ui/acceptance.md` (ignored by Git).
+Automated checks retained in this repository are the security tests under `tests/` and browser security checks for login/invitation error states, response headers and text/image/PDF preview/download grants. Run them using the security instructions above. The former full CURRENT UI and Search/Version/Quota regression scripts were removed; these broader flows now require team testing. T01–T23 in the design specification remain a manual acceptance checklist. Historical reports under `.quota-reports/` do not represent current automated coverage.
 
 ## File name and metadata keyword search
 
@@ -252,10 +235,6 @@ The file workspace has **ค้นหาชื่อไฟล์หรือ tag
 
 Search reads metadata directly, so metadata changes and successful version publication/restore are searchable immediately. This release adds no schema, extension, index, search service, extraction worker or backfill. It uses existing scoped listing indexes. A rollback-only fixture with 5,000 additional files measured approximately 209 ms for PostgreSQL execution on the initial test run (not end-to-end API latency or a performance guarantee); inspect the recorded EXPLAIN baseline before planning larger-scale indexing.
 
-```powershell
-node --env-file=.env.local scripts/check-file-search.mjs
-node --env-file=.env.local scripts/check-file-search-ui.mjs
-```
 
 The database check uses isolated TEMP tables and a TEMP copy of the existing folder-visibility function, rolls everything back, and prints EXPLAIN timings. It covers literal matching/injection, criteria-bound cursors, legacy clients, tenant/application/owner/folder isolation and current metadata. The UI check uses mocked Auth/APIs and Playwright with installed Chrome at 1440px/390px. It expects a running test server on `http://localhost:3017` (override `SEARCH_UI_URL`), and uses `PLAYWRIGHT_MODULE` / `SEARCH_UI_BROWSER` overrides or the same ignored test runtime as quota UI tests. Screenshots are saved to `.quota-reports/search-ui/`. Tests do not change real files or permissions.
 
@@ -272,15 +251,6 @@ Changing a file's department through the metadata endpoint transfers all outstan
 The initial backfill on 2026-11-02 verified all three existing departments against Storage and initialized their accounting. Limits remain unlimited (`limit_bytes=NULL`) until a Tenant Admin changes them. Newly created or unverified departments still return `pending_backfill` with unknown totals. A finite limit on uninitialized accounting fails closed with `503 quota_accounting_not_ready`. The **พื้นที่จัดเก็บ** screen and quota endpoints below provide scoped usage and limit management. Restart the API and outbox worker after installing these changes; this step needs no additional migration.
 
 This step does not enforce a physical hard cap on direct signed uploads; publication is validated at complete, and bucket limits plus cleanup still apply.
-
-```powershell
-node --env-file=.env.local scripts/check-quota-uploads.mjs
-node --env-file=.env.local scripts/check-quota-worker-transfers.mjs
-node --env-file=.env.local scripts/check-object-cleanup.mjs
-node --env-file=.env.local scripts/check-quota-reconciliation.mjs
-```
-
-The checks use PostgreSQL TEMP tables and simulated Storage/Auth, plus a brief two-connection quota-lock check with all writes rolled back. They cover destination capacity, permissions, audit rollback, transfer during deletion, cleanup retries and purge receipts. No real Storage objects are created.
 
 ### Backfill and reconciliation commands
 
@@ -361,16 +331,6 @@ Invoke-RestMethod "http://localhost:3000/api/v1/departments/<DEPARTMENT_UUID>/st
 
 The UI offers unlimited or bytes/MB/GB (decimal: 1 MB = 1,000,000 bytes; 1 GB = 1,000,000,000 bytes), validates on blur/submit, preserves exact values with decimal strings/BigInt and previews remaining space. A conflict reloads current values while retaining input; it never automatically resubmits. Refresh occurs on page entry, manually and after saves, without polling. There is no new schema, auth scope, email alert or usage-history chart.
 
-Quota checks:
-
-```powershell
-node --env-file=.env.local scripts/check-quota-api.mjs
-node --env-file=.env.local scripts/check-quota-api.mjs --live-read
-node --env-file=.env.local scripts/check-quota-ui.mjs
-```
-
-API writes are tested on TEMP fixtures and rolled back. `--live-read` additionally reads current departments and checks quota-row serialization with a no-op setter under two rollback-only transactions; it does not change real limits. The UI check needs an already running server at `http://localhost:3017` (override with `QUOTA_UI_URL`), installed Chrome (override `QUOTA_UI_BROWSER`) and Playwright (override `PLAYWRIGHT_MODULE`; the local test runtime is `.quota-reports/ui-runtime/node_modules/playwright`). Auth/APIs are mocked. Screenshots in `.quota-reports/ui/` cover 1440px/390px, permissions, validation, conflict/retry, success, empty/error states and dialog keyboard focus. No production account is modified by browser tests.
-
 Next.js App Router API foundation for the shared File Storage Service. The project uses TypeScript, Route Handlers, PostgreSQL via `pg`, and Supabase Storage via `@supabase/supabase-js`.
 
 Invited-user Supabase Auth setup and Tenant Admin bootstrap: [docs/SUPABASE_AUTH_SETUP.md](docs/SUPABASE_AUTH_SETUP.md).
@@ -379,13 +339,6 @@ Tenant Admin audit history is available at `GET /api/v1/audit-events` and in the
 
 The same worker cleans up tracked incomplete uploads and restore copies every minute (up to 10 objects per cycle), after their intent expires plus a one-hour grace period. It preserves current/available versions and recoverable trash, records durable jobs in `filesvc.object_cleanup_jobs`, and retries failures. Apply migrations and restart the worker when updating; see [cleanup behavior](docs/API_DOCUMENTATION.md#cleanup-ของ-uploadrestore-ที่ค้าง). Logs beginning with `Abandoned object cleanup failed` require monitoring; this job does not send alerts via the audit-retention webhook.
 
-Cleanup verification uses isolated PostgreSQL TEMP tables and simulated Storage:
-
-```powershell
-node --env-file=.env.local scripts/check-object-cleanup.mjs
-# Also upload/remove one isolated Storage fixture, with cleanup in finally:
-node --env-file=.env.local scripts/check-object-cleanup.mjs --storage
-```
 
 ## Current endpoints
 
@@ -505,3 +458,9 @@ It polls the outbox until stopped with `Ctrl+C`. After the worker is running, a 
 สร้าง Railway service `efin-dms-redis` (ID `dacabc32-d867-4347-97d9-af1d1eb97395`) ใน project EFIN DMS, Singapore 1 replica, sleep ปิด ตรวจไม่มี public domain และไม่มี TCP proxy แล้ว ตั้ง Redis reference, HMAC secret และ report mode เป็น staged web variables ด้วย skip-deploys ไม่แสดงค่าลับ ไม่ deploy เว็บ/worker รุ่นใหม่นี้ และยังไม่เปิด enforce ผลทดสอบบน Railway ให้ทีมตรวจหลัง deploy release นี้
 
 ผลตรวจ local ของ security release (4 พฤศจิกายน 2569): backend/security tests 17 กรณีผ่าน พร้อม Search/Version/Quota regression; CURRENT UI 13 กลุ่มและ responsive 375/390/768/1024/1280/1440 ผ่าน; browser security tests 3 กรณีผ่าน รวม login/invitation error, response headers และ text/image/PDF preview/download ด้วย mocks Gitleaks ตรวจ history 22 commits และ source working tree ไม่พบ leaks ตามกฎที่ใช้ npm audit ไม่มี High/Critical (ยังมี Low/Moderate ใน dev dependencies) Runtime เปลี่ยนเป็น Node24 Alpine หลัง Debian มี unpatched OS findings; Alpine scan ไม่พบ High/Critical โดยไม่เพิ่ม ignore ไม่มีการยืนยันผล CI บน GitHub หรือ flow จริงบน Railway ในรอบนี้
+
+### Test-script removal
+
+Removed the legacy regression scripts from `scripts/` and their npm/CI entry points. The fixture initializer now lives at `tests/fixtures/setup.mjs`; `fixtures:security`, `test:security` and `test:security-browser` remain supported. Worker, pre-deploy, bootstrap/key creation, Storage limits and quota maintenance tools remain in `scripts/`. No API, production schema, permissions or Railway deployment changed. Search/Version/Quota and full workspace regression coverage has intentionally been reduced; the dated test results above describe the earlier release, not the retained suite.
+
+Validation after removal: the moved fixture initializer and all 17 retained security tests passed against disposable PostgreSQL/Redis; all 3 browser security tests passed against the local production build with mocked Auth/Storage/APIs. TypeScript, lint and webpack production build passed. All 11 remaining operational scripts parse and their relative dependencies resolve; worker helper modules import successfully. No live worker, pre-deploy network check or Railway deployment was run.
