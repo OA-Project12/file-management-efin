@@ -20,6 +20,15 @@ export function getDatabasePool(): Pool {
     max: 5,
     idleTimeoutMillis: 30_000,
     connectionTimeoutMillis: 5_000,
+    // pg-pool awaits onConnect before lending the connection. SET works through
+    // Session Pooler without requiring support for extra startup parameters.
+    onConnect: async (client) => {
+      const initialization = {
+        text: "SET statement_timeout = '15s'; SET lock_timeout = '5s'",
+        query_timeout: 5_000,
+      };
+      await client.query(initialization);
+    },
   });
 
   globalForDatabase.fileStoragePool = pool;

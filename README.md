@@ -1,5 +1,88 @@
 # File Storage API
 
+## Security hardening — รอบแรก
+
+เพิ่ม guard กลางสำหรับ `/api/v1/*`, Redis token buckets, bounded JSON reader, timeouts, security headers และ structured logs โดยคงสิทธิ์และ API เดิม ไม่มี migration production
+
+### Configuration และ Railway
+
+- Redis เป็น service **private** ภายใน Railway project ไม่เปิด public domain/TCP proxy; ตั้งรหัสผ่าน และใช้ private URL ผ่าน service variable reference เฉพาะเว็บ Worker ไม่ต้องใช้ Redis
+- `REDIS_URL`: runtime เท่านั้น ห้ามใส่ build ARG หรือ browser variables
+- `RATE_LIMIT_KEY_SECRET`: secret สุ่มอิสระอย่างน้อย 32 bytes ใช้ HMAC ของ identity/IP ไม่ใช้ database password หรือ Supabase key แทน สร้างด้วย `node -e "console.log(require('node:crypto').randomBytes(32).toString('base64url'))"` ใน trusted terminal แล้วใส่ Railway Variables โดยไม่บันทึกลง Git/logs
+- `RATE_LIMIT_MODE=report` เป็นค่าเริ่มต้น: นับ/รายงาน แต่ **ยังไม่ปฏิเสธ** คำขอที่เกิน rate หรือเมื่อ Redis ล่ม เมื่อทีมตรวจแล้วจึงเปลี่ยนเป็น `enforce` และ redeploy/restart
+- `TRUSTED_PROXY_MODE=railway` เชื่อ `X-Real-IP` เฉพาะ ingress ของ Railway; ทีมต้องตรวจการ overwrite header กับ domain จริงก่อนเปิด enforce ไม่เชื่อ X-Forwarded-For หากไม่มี/ผิดรูปแบบใช้ bucket unknown ร่วม Local ใช้ `local` ซึ่งไม่เชื่อ forwarding headers
+- `SECURITY_ENVIRONMENT`: namespace แยก environment; ถ้าไม่ตั้งใช้ Railway environment ID แล้วจึง NODE_ENV ทุก replica ของ environment เดียวกันต้องใช้ namespace และ HMAC secret เดียวกัน
+- Private Redis ไม่มี endpoint สำหรับ browser; ไม่ใช้ Redis production จาก local tests ใช้ container แยกต่างหาก
+- ค่า capacity ปรับได้ผ่าน `RATE_LIMIT_<IP|IDENTITY|GRANTS|UPLOADS|DESTRUCTIVE|INVITES|KEYS>_CAPACITY` ต้องเป็น integer 1–1,000,000 (uploads อย่างน้อย 20) รอบเวลาเติมกลับไม่เปลี่ยน
+
+| Bucket | Capacity / refill period |
+|---|---|
+| IP ก่อน Auth | 600 / 60 วินาที |
+| ผู้ใช้หรือ key ที่ยืนยันแล้ว | 300 / 60 วินาที |
+| Preview/download URL ทุกเวอร์ชัน | 60 / 60 วินาที |
+| Upload intents | 120 ไฟล์ / 60 วินาที; batch หักตามจำนวนไฟล์ |
+| Version restore / purge | 10 / 60 วินาที |
+| Invite | 10 / 3,600 วินาที |
+| สร้าง/เพิกถอน key | 20 / 3,600 วินาที |
+
+แต่ละ bucket เติม token ต่อเนื่องและมี burst สูงสุดเท่า capacity คำขอต้องผ่าน bucket ทั่วไปและเฉพาะงานพร้อมกัน Lua ใช้ Redis TIME และทำ admission แบบ atomic ไม่มีตัวนับ memory fallback ตัวนับมี TTL ไม่ใช่ข้อมูลธุรกิจถาวร Redis restart ที่สูญเสียข้อมูลอาจคืน burst budget จึงต้องติดตาม restart ด้วย
+
+`429 rate_limited` มี `Retry-After`, `X-Request-Id`, `Cache-Control: no-store` และ `{ error: { code, message, requestId } }`; UI แสดงเวลารอ ไม่ replay mutation อัตโนมัติ ใน enforce เมื่อ Redis/config ใช้ไม่ได้คืน `503 security_control_unavailable` ก่อนเริ่ม mutation และ readiness/pre-deploy fail Health/static ไม่ผ่าน limiter; login ตรง Supabase Auth อยู่นอก limiter นี้
+
+### Request limits และ timeout
+
+- 4 KiB: search, keys, สร้าง folder/department, quota, URL grants และ status commands
+- 16 KiB: upload intent เดี่ยว/version, metadata, user operations และ folder access
+- 64 KiB: batch upload intent สูงสุด 20 ไฟล์
+- นับ bytes จาก stream จริง (รวม UTF-8 ไทย), ไม่เชื่อ Content-Length อย่างเดียว รองรับ JSON ที่ไม่ระบุ Content-Type แต่ปฏิเสธชนิดอื่นที่ระบุชัดด้วย 415
+- JSON ผิดรูปแบบคืน 400; เกินขนาด 413; อ่าน body เกิน 10 วินาทีคืน 408 ก่อนเริ่ม mutation ขนาดนี้ไม่ใช่เพดานเนื้อหาไฟล์ เพราะไฟล์ส่งตรง Storage
+- API connection timeout 5s, SQL statement timeout 15s, lock timeout 5s; Supabase fetch 15s และ restore copy 60s ไม่เปลี่ยน worker/maintenance timeout โดยเหมารวม
+- Timeout ไม่ได้แปลว่า Storage operation ไม่เคยเกิดขึ้น ระบบคง intent/reservation และ cleanup เดิม อย่าส่ง mutation ซ้ำโดยอัตโนมัติ
+
+### Headers และ logs
+
+CSP จำกัด resource origins ไปยังเว็บและ Supabase origin ที่กำหนด ไม่มี wildcard Supabase และไม่มี unsafe-eval ใน production คง inline script/style ที่ Next.js/controls ต้องใช้ จึงยังไม่ใช่ strict CSP แบบ nonce ไม่เปลี่ยน Cache Components/PPR
+
+เพิ่ม frame-ancestors none, X-Frame-Options DENY, nosniff, no-referrer และ Permissions-Policy ปิด camera/microphone/geolocation HSTS production ใช้ max-age=31536000 ไม่รวม subdomains/preload เปลี่ยน NEXT_PUBLIC_SUPABASE_URL ต้อง rebuild ให้ browser bundle และ CSP ตรงกัน Headers ของ object ที่ Supabase ให้บริการโดยตรงไม่ได้ถูกเปลี่ยนจาก next.config
+
+Logger กลางของ API/worker ใช้ allowlist ไม่ส่ง raw errors, body, headers หรือ SQL parameters ข้อมูล nested/ข้อความถูก redact และตัด credentials/query strings ของ URL Rate-limit warnings ถูกจำกัดความถี่ต่อ process ไม่เขียน Audit DB ทุกคำขอที่ถูก throttle Audit details ปฏิเสธ sensitive fields/credentials/signed URLs และ rollback ร่วมกับ mutation คำสั่ง key:create ยังคงพิมพ์ secret ครั้งเดียวตามหน้าที่เดิม
+
+### Automated checks แบบข้อมูลจำลอง
+
+ใช้ PostgreSQL/Redis disposable เท่านั้น ไม่ใช้ .env.local หรือ production credentials กับคำสั่งต่อไปนี้:
+
+```powershell
+docker run --detach --rm --name efin-security-pg --publish 127.0.0.1:55437:5432 --env POSTGRES_PASSWORD=fixture-password --env POSTGRES_DB=efin_security postgres:17-alpine
+docker run --detach --rm --name efin-security-redis --publish 127.0.0.1:56379:6379 redis:7-alpine redis-server --requirepass fixture-password
+$env:DATABASE_URL='postgresql://postgres:fixture-password@127.0.0.1:55437/efin_security'
+$env:REDIS_URL='redis://:fixture-password@127.0.0.1:56379'
+$env:RATE_LIMIT_KEY_SECRET='synthetic-test-secret-at-least-32-characters'
+$env:RATE_LIMIT_MODE='report'
+npm.cmd run fixtures:security
+npm.cmd run test:security
+npm.cmd run test:backend
+```
+
+fixtures:security ปฏิเสธ remote host และ database ที่ไม่ได้ชื่อ efin_security; ใช้ `tests/fixtures/schema.sql` ซึ่งเป็น schema จำลองสำหรับทดสอบเท่านั้น ไม่ใช่ migration/RLS proof ของ production ไม่รัน setup ซ้ำใน database เดิมที่มี schema แล้ว
+
+UI ใช้ public configuration จำลอง build แล้วเปิด Next production server ที่ 127.0.0.1:3017 ติดตั้ง Chromium ด้วย `npx playwright install chromium`; รัน `npm run test:ui` และ `npm run test:security-browser` โดยตั้ง NEXT_PUBLIC_SUPABASE_URL=https://fixture.supabase.co และ NEXT_PUBLIC_SUPABASE_PUBLISHABLE_KEY=sb_publishable_fixture_only ทั้งตอน build และ tests Auth/Storage/APIs ใน flow ใช้ mocks ไม่อัปโหลดไฟล์จริง เก็บภาพ/ผลชั่วคราวใต้ .quota-reports ที่ Git ignore
+
+ก่อนเปิดเว็บจริง ทีมตรวจ login/invitation, text/image/PDF preview และ download, 429/Redis outage และ trusted client IP บน Railway การผ่าน fixtures ไม่แทนผลทดสอบนี้
+
+### CI และ rollout/rollback
+
+Runtime image ใช้ Node.js 24 แบบ minimal, รันด้วย user node และไม่มี npm/npx/Yarn ใน final stage คำสั่ง cloud ต้องใช้ node โดยตรง ย้าย shadcn CLI ไป devDependencies เพราะ component code ไม่ import CLI ตอน runtime
+
+
+`.github/workflows/security.yml` ทำ TypeScript/lint/build, backend/security/production UI tests ด้วย PostgreSQL/Redis ชั่วคราว, npm audit, Gitleaks full-history แบบ redact และ Trivy runtime image scan Actions และ scanner images pin SHA/digest ใช้ contents:read และไม่มี production secrets หรือ auto-deploy
+
+High/Critical dependency/image vulnerabilities และ secret findings ทำให้ CI fail รวม scanner/network error ด้วย ไม่เพิ่ม ignore กว้างหรือใช้ audit fix --force ข้อยกเว้นต้องระบุ advisory เหตุผล ผู้รับผิดชอบ และ expiry ผ่านการ review แยกต่างหาก Low/Moderate ยังต้องติดตามแม้ไม่เป็น blocking threshold รอบนี้
+
+ตั้ง branch protection/ruleset ของ master ให้ require: Security and regression, Dependency scan, Secret scan, Runtime image scan โดยผู้ดูแล repository หลัง workflow ถูก push และตรวจผ่าน การเพิ่ม workflow อย่างเดียวไม่ได้บังคับ merge ผ่าน CI
+
+Rollout: เตรียม private Redis/variables → deploy release ใน report → ทีมตรวจ flow/headers/IP และดู warnings → ปรับ capacity ตามหลักฐาน → เปิด enforce และตรวจ readiness หากจำเป็นต้องคืน availability ระหว่าง Redis outage เปลี่ยนกลับ report และ restart เว็บ โดยเข้าใจว่า rate limiting จะไม่ block ชั่วคราว ไม่ลบ Audit/ไฟล์/โควตาเพื่อ rollback งานนี้ไม่มี schema migration และไม่มีการ deploy หรือแก้ branch protection อัตโนมัติ
+
+
 ## Railway: ทดสอบบนคลาวด์ใน project EFIN DMS
 
 ใช้ Supabase เดิมทั้ง Database/Auth/Storage จึงเป็นข้อมูลชุดเดียวกับ local งานนี้ไม่เพิ่ม schema และไม่ย้ายไฟล์เข้า Railway
@@ -348,7 +431,7 @@ File access is scoped by tenant, application, department role, and file status. 
 
 ## Development notes
 
-- This is an API foundation; Railway deployment and credentials are intentionally not configured.
+- Web and worker are deployed independently; keep runtime credentials in platform variables and follow the Railway setup above.
 - The app uses the Node.js runtime for database and Storage integrations.
 - The workspace is now using Node `24.22.1` (npm `11.19.1`), matching the project version in `.nvmrc`.
 - Next.js Route Handlers live under `src/app` and use Web `Request`/`Response` APIs.
@@ -416,3 +499,9 @@ npm.cmd run worker:outbox
 
 It polls the outbox until stopped with `Ctrl+C`. After the worker is running, a `202` from the purge endpoint means the event is queued; the worker then removes the object and changes the file status to `deleted`.
 - Upload tokens and signed URLs are bearer capabilities. Treat the response as a secret and do not log it. The current private bucket has no per-bucket size limit configured; set one in the Supabase Dashboard to match `MAX_UPLOAD_SIZE_BYTES` before relying on the API size check in production.
+
+### Security rollout preparation — 4 พฤศจิกายน 2569
+
+สร้าง Railway service `efin-dms-redis` (ID `dacabc32-d867-4347-97d9-af1d1eb97395`) ใน project EFIN DMS, Singapore 1 replica, sleep ปิด ตรวจไม่มี public domain และไม่มี TCP proxy แล้ว ตั้ง Redis reference, HMAC secret และ report mode เป็น staged web variables ด้วย skip-deploys ไม่แสดงค่าลับ ไม่ deploy เว็บ/worker รุ่นใหม่นี้ และยังไม่เปิด enforce ผลทดสอบบน Railway ให้ทีมตรวจหลัง deploy release นี้
+
+ผลตรวจ local ของ security release (4 พฤศจิกายน 2569): backend/security tests 17 กรณีผ่าน พร้อม Search/Version/Quota regression; CURRENT UI 13 กลุ่มและ responsive 375/390/768/1024/1280/1440 ผ่าน; browser security tests 3 กรณีผ่าน รวม login/invitation error, response headers และ text/image/PDF preview/download ด้วย mocks Gitleaks ตรวจ history 22 commits และ source working tree ไม่พบ leaks ตามกฎที่ใช้ npm audit ไม่มี High/Critical (ยังมี Low/Moderate ใน dev dependencies) Runtime เปลี่ยนเป็น Node24 Alpine หลัง Debian มี unpatched OS findings; Alpine scan ไม่พบ High/Critical โดยไม่เพิ่ม ignore ไม่มีการยืนยันผล CI บน GitHub หรือ flow จริงบน Railway ในรอบนี้

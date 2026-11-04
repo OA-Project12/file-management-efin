@@ -1,3 +1,4 @@
+import { logger } from "@/infrastructure/security/logger.mjs";
 import { auditRoute } from "@/infrastructure/audit/audit-route";
 import { authenticateApplicationKey } from "@/infrastructure/auth/application-key-authenticator";
 import { PostgresFolderRepository } from "@/infrastructure/database/postgres-folder-repository";
@@ -61,7 +62,7 @@ async function handleGET(request: Request): Promise<Response> {
         );
         return Response.json({ data: { items } }, { headers: { "Cache-Control": "no-store" } });
     } catch (error) {
-        console.error("Could not list folders", { message: error instanceof Error ? error.message : "Unknown error" });
+        logger.error("Could not list folders", { message: error instanceof Error ? error.message : "Unknown error" });
         return errorResponse("service_unavailable", "Could not list folders.", 503);
     }
 }
@@ -108,7 +109,7 @@ async function handlePOST(request: Request): Promise<Response> {
         const dbError = error as { code?: string; message?: string };
         if (dbError.code === "23505")
             return errorResponse("folder_name_conflict", "A folder with this name already exists at this level.", 409);
-        console.error("Could not create folder", { code: dbError.code, message: dbError.message ?? "Unknown error" });
+        logger.error("Could not create folder", { code: dbError.code, message: dbError.message ?? "Unknown error" });
         return errorResponse("service_unavailable", "Could not create folder.", 503);
     }
 }

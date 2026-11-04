@@ -1,3 +1,4 @@
+import { logger } from "@/infrastructure/security/logger.mjs";
 import { auditRoute } from "@/infrastructure/audit/audit-route";
 import { getDatabasePool } from "@/infrastructure/database/pool";
 import { recordAudit } from "@/infrastructure/audit/record-audit";
@@ -129,7 +130,7 @@ async function handlePATCH(request: Request, { params }: { params: Promise<{ fil
     } catch (error) {
         const quota=storageQuotaErrorResponse(error);
         if(quota) return quota;
-        console.error("Could not update file metadata", { message: error instanceof Error ? error.message : "Unknown error" });
+        logger.error("Could not update file metadata", { message: error instanceof Error ? error.message : "Unknown error" });
         return errorResponse("service_unavailable", "Could not update file metadata.", 503);
     }
 }

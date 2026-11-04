@@ -1,3 +1,4 @@
+import { logger } from "@/infrastructure/security/logger.mjs";
 import { auditRoute } from "@/infrastructure/audit/audit-route";
 import { storageQuotaErrorResponse } from "@/infrastructure/http/storage-quota-errors";
 import { StorageQuotaError } from "@/domain/storage/department-quota";
@@ -54,7 +55,7 @@ async function handlePOST(request: Request, context: { params: Promise<{ fileId:
         if (objectInfo.sizeBytes > getMaxUploadSizeBytes()) {
             await repository.quarantineUpload(application, fileId, application.tenantId, application.applicationId,objectInfo.sizeBytes,actualContentType);
             await objectStorage.deleteObject(upload.bucketId, upload.objectKey).catch((error) => {
-                console.error("Could not remove oversized uploaded object", {
+                logger.error("Could not remove oversized uploaded object", {
                     message: error instanceof Error ? error.message : "Unknown storage error",
                 });
             });
@@ -84,7 +85,7 @@ async function handlePOST(request: Request, context: { params: Promise<{ fileId:
         const quota=storageQuotaErrorResponse(error);
         if(quota) return quota;
         const serviceError = error as { code?: string; message?: string };
-        console.error("Could not complete upload", {
+        logger.error("Could not complete upload", {
             code: serviceError.code,
             message: serviceError.message ?? "Unknown upload completion error",
         });

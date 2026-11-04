@@ -1,3 +1,4 @@
+import { logger } from "@/infrastructure/security/logger.mjs";
 import { auditRoute } from "@/infrastructure/audit/audit-route";
 import { RequestFileUpload } from "@/application/files/request-file-upload";
 import { storageQuotaErrorDetails } from "@/infrastructure/http/storage-quota-errors";
@@ -135,7 +136,7 @@ async function handlePOST(request: Request): Promise<Response> {
                 items.push({ index, status: "ready", ...upload });
             } catch (error) {
                 const quota=storageQuotaErrorDetails(error);
-                console.error("Could not create batch upload intent", {
+                logger.error("Could not create batch upload intent", {
                     index,
                     message: error instanceof Error ? error.message : "Unknown error",
                 });
@@ -152,7 +153,7 @@ async function handlePOST(request: Request): Promise<Response> {
             { status: 200, headers: { "Cache-Control": "no-store" } },
         );
     } catch (error) {
-        console.error("Could not create batch upload intents", { message: error instanceof Error ? error.message : "Unknown error" });
+        logger.error("Could not create batch upload intents", { message: error instanceof Error ? error.message : "Unknown error" });
         return errorResponse("service_unavailable", "Could not create batch upload intents.", 503);
     }
 }

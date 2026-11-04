@@ -1,9 +1,8 @@
 # syntax=docker/dockerfile:1
-FROM node:24-bookworm-slim AS base
+FROM node:24-alpine AS base
 WORKDIR /app
 ENV NEXT_TELEMETRY_DISABLED=1
-RUN apt-get update && apt-get install -y --no-install-recommends ca-certificates \
-    && rm -rf /var/lib/apt/lists/*
+RUN apk upgrade --no-cache && apk add --no-cache ca-certificates libc6-compat
 
 FROM base AS dependencies
 COPY package.json package-lock.json ./
@@ -34,9 +33,13 @@ COPY --chown=node:node package.json package-lock.json next.config.ts ./
 COPY --chown=node:node public ./public
 # Worker/quota scripts import other scripts and the source maintenance module.
 COPY --chown=node:node scripts ./scripts
+COPY --chown=node:node src/infrastructure/security ./src/infrastructure/security
 COPY --chown=node:node src/infrastructure/storage/storage-maintenance.mjs ./src/infrastructure/storage/storage-maintenance.mjs
 COPY --chown=node:node certs/prod-ca-2021.crt ./certs/prod-ca-2021.crt
 RUN mkdir -p /tmp/efin-dms-quota && chown node:node /tmp/efin-dms-quota
+# Runtime uses direct node commands; package managers and their bundled dependencies are unnecessary.
+RUN rm -rf /usr/local/lib/node_modules/npm /opt/yarn-* \
+    && rm -f /usr/local/bin/npm /usr/local/bin/npx /usr/local/bin/yarn /usr/local/bin/yarnpkg
 USER node
 EXPOSE 3000
 STOPSIGNAL SIGTERM

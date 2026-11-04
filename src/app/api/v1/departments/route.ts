@@ -1,3 +1,4 @@
+import { logger } from "@/infrastructure/security/logger.mjs";
 import { auditRoute } from "@/infrastructure/audit/audit-route";
 import { recordAudit } from "@/infrastructure/audit/record-audit";
 import { randomBytes } from "node:crypto";
@@ -16,7 +17,7 @@ async function handleGET(request: Request): Promise<Response> {
             return errorResponse("forbidden", "The API key does not have files:read or keys:manage scope.", 403);
         return Response.json({ data: { items: app.departments } }, { headers: { "Cache-Control": "no-store" } });
     } catch (error) {
-        console.error("Could not list departments", { message: error instanceof Error ? error.message : "Unknown error" });
+        logger.error("Could not list departments", { message: error instanceof Error ? error.message : "Unknown error" });
         return errorResponse("service_unavailable", "Could not list departments.", 503);
     }
 }
@@ -70,7 +71,7 @@ async function handlePOST(request: Request): Promise<Response> {
     } catch (error) {
         const dbError = error as { code?: string; message?: string };
         if (dbError.code === "23505") return errorResponse("department_name_conflict", "A department with this name already exists.", 409);
-        console.error("Could not create department", { code: dbError.code, message: dbError.message ?? "Unknown error" });
+        logger.error("Could not create department", { code: dbError.code, message: dbError.message ?? "Unknown error" });
         return errorResponse("service_unavailable", "Could not create department.", 503);
     }
 }

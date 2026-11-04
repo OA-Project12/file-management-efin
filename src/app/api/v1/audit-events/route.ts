@@ -1,3 +1,4 @@
+import { logger } from "@/infrastructure/security/logger.mjs";
 import { authenticateApplicationKey } from "@/infrastructure/auth/application-key-authenticator";
 import { connection } from "next/server";
 import { getDatabasePool } from "@/infrastructure/database/pool";
@@ -116,7 +117,7 @@ async function handleGET(request: Request): Promise<Response> {
             { headers: { "Cache-Control": "no-store" } },
         );
     } catch (error) {
-        console.error("Could not list audit events", { message: error instanceof Error ? error.message : "Unknown error" });
+        logger.error("Could not list audit events", { message: error instanceof Error ? error.message : "Unknown error" });
         return fail("service_unavailable", "Could not list audit events.", 503);
     }
 }

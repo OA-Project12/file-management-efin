@@ -1,3 +1,4 @@
+import { logger } from "../src/infrastructure/security/logger.mjs";
 import { createRequire } from "node:module";
 import process from "node:process";
 import { purgeFileObjects, finishFilePurge } from "./file-purge.mjs";
@@ -19,7 +20,7 @@ const supabaseUrl = process.env.SUPABASE_URL;
 const supabaseSecretKey = process.env.SUPABASE_SECRET_KEY;
 
 if (!workerDatabaseUrl || !supabaseUrl || !supabaseSecretKey) {
-    console.error("WORKER_DATABASE_URL, SUPABASE_URL, and SUPABASE_SECRET_KEY must be configured.");
+    logger.error("WORKER_DATABASE_URL, SUPABASE_URL, and SUPABASE_SECRET_KEY must be configured.");
     process.exit(1);
 }
 
@@ -133,7 +134,7 @@ async function scheduleRetry(event, error) {
     `,
         [event.id, retrySeconds],
     );
-    console.error("Outbox event failed; retry scheduled", {
+    logger.error("Outbox event failed; retry scheduled", {
         outboxId: event.id,
         attempts: event.attempts,
         retrySeconds,
@@ -146,14 +147,14 @@ async function processEvent(event) {
         const file = validatePayload(event);
         const verified = await purgeFileObjects(pool, file, removeObjectIfPresent);
         await finishFilePurge(pool, event, file, verified);
-        console.log("File deletion completed", { outboxId: event.id, fileId: file.fileId });
+        logger.info("File deletion completed", { outboxId: event.id, fileId: file.fileId });
     } catch (error) {
         await scheduleRetry(event, error);
     }
 }
 
 async function main() {
-    console.log("Outbox worker started.");
+    logger.info("Outbox worker started.");
     let nextAuditMaintenance = 0;
     let nextObjectCleanup = 0;
     try {
@@ -163,9 +164,9 @@ async function main() {
                 if (release) {
                     try {
                         const result = await runObjectCleanup(pool, removeObjectIfPresent, { limit: BATCH_SIZE, stopping: () => stopping });
-                        if (result.scheduled || result.processed) console.log("Object cleanup cycle completed", result);
+                        if (result.scheduled || result.processed) logger.info("Object cleanup cycle completed", result);
                     } catch (error) {
-                        console.error("Object cleanup cycle failed; retrying in one minute", {
+                        logger.error("Object cleanup cycle failed; retrying in one minute", {
                             code: typeof error?.code === "string" ? error.code : "cleanup_cycle_failed",
                         });
                     } finally {
@@ -177,11 +178,11 @@ async function main() {
             if (Date.now() >= nextAuditMaintenance) {
                 try {
                     const result = await pool.query("select filesvc.maintain_audit_retention() as result");
-                    console.log("Audit retention completed", result.rows[0]?.result);
+                    logger.info("Audit retention completed", result.rows[0]?.result);
                     nextAuditMaintenance = Date.now() + 24 * 60 * 60 * 1000;
                 } catch (error) {
                     const message = error instanceof Error ? error.message : "Unknown error";
-                    console.error("Audit retention failed; operator attention required", { message });
+                    logger.error("Audit retention failed; operator attention required", { message });
                     if (process.env.AUDIT_ALERT_WEBHOOK_URL) {
                         try {
                             const alert = await fetch(process.env.AUDIT_ALERT_WEBHOOK_URL, {
@@ -194,9 +195,9 @@ async function main() {
                                 }),
                                 signal: AbortSignal.timeout(5000),
                             });
-                            if (!alert.ok) console.error("Audit alert delivery failed", { status: alert.status });
+                            if (!alert.ok) logger.error("Audit alert delivery failed", { status: alert.status });
                         } catch (alertError) {
-                            console.error("Audit alert delivery failed", {
+                            logger.error("Audit alert delivery failed", {
                                 message: alertError instanceof Error ? alertError.message : "Unknown error",
                             });
                         }
@@ -221,12 +222,12 @@ async function main() {
         }
     } finally {
         await pool.end();
-        console.log("Outbox worker stopped.");
+        logger.info("Outbox worker stopped.");
     }
 }
 
 main().catch((error) => {
-    console.error("Outbox worker stopped after an unexpected error", {
+    logger.error("Outbox worker stopped after an unexpected error", {
         code: typeof error?.code === "string" ? error.code : undefined,
         message: error instanceof Error ? error.message : "Unknown worker error",
     });

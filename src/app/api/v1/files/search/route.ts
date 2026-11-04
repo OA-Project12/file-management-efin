@@ -1,3 +1,4 @@
+import { logger } from "@/infrastructure/security/logger.mjs";
 import { auditRoute } from "@/infrastructure/audit/audit-route";
 import { ListFiles } from "@/application/files/list-files";
 import type { FilePagePosition } from "@/application/files/ports/file-repository";
@@ -204,7 +205,7 @@ async function handlePOST(request: Request): Promise<Response> {
         return Response.json({ data: { items, nextCursor } }, { headers: { "Cache-Control": "no-store" } });
     } catch (error) {
         const serviceError = error as { code?: string; message?: string };
-        console.error("Could not list files", {
+        logger.error("Could not list files", {
             code: serviceError.code,
             message: serviceError.message ?? "Unknown file listing error",
         });

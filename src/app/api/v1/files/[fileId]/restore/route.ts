@@ -1,3 +1,4 @@
+import { logger } from "@/infrastructure/security/logger.mjs";
 import { auditRoute } from "@/infrastructure/audit/audit-route";
 import { authenticateApplicationKey } from "@/infrastructure/auth/application-key-authenticator";
 import { canSeeFile } from "@/application/auth/folder-visibility";
@@ -45,7 +46,7 @@ async function handlePOST(request: Request, { params }: { params: Promise<{ file
         if (result === "not_found") return fail("file_not_found", "File was not found in trash.", 404);
         return Response.json({ data: { fileId, status: "available" } }, { headers: { "Cache-Control": "no-store" } });
     } catch (error) {
-        console.error("Could not restore file", { message: error instanceof Error ? error.message : "Unknown error" });
+        logger.error("Could not restore file", { message: error instanceof Error ? error.message : "Unknown error" });
         return fail("service_unavailable", "Could not restore file.", 503);
     }
 }

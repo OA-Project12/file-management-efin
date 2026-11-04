@@ -1,6 +1,7 @@
 // Read-only preflight. Does not start the worker, process outbox or change data.
 import { Pool } from "pg";
 import { createClient } from "@supabase/supabase-js";
+import { checkRedisReady, closeRedis, mode } from "../src/infrastructure/security/rate-limit.mjs";
 
 const target = process.argv[2];
 if (!["web", "worker"].includes(target)) {
@@ -34,6 +35,8 @@ try {
     client.release();
   }
   if (target === "web") {
+    await checkRedisReady();
+    checks.rateLimitMode = mode();
     const { rows: [application] } = await pool.query(
       "select exists(select 1 from filesvc.applications where id=$1::uuid and status='active') as active",
       [process.env.AUTH_APPLICATION_ID],
@@ -62,4 +65,5 @@ try {
   process.exitCode = 1;
 } finally {
   await pool?.end();
+  await closeRedis();
 }

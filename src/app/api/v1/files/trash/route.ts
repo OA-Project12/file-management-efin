@@ -1,3 +1,4 @@
+import { logger } from "@/infrastructure/security/logger.mjs";
 import { auditRoute } from "@/infrastructure/audit/audit-route";
 import { authenticateApplicationKey } from "@/infrastructure/auth/application-key-authenticator";
 import { accessibleDepartmentIds, hasDepartmentRole } from "@/application/auth/department-authorization";
@@ -73,7 +74,7 @@ async function handleGET(request: Request): Promise<Response> {
                 : null;
         return Response.json({ data: { items, nextCursor } }, { headers: { "Cache-Control": "no-store" } });
     } catch (error) {
-        console.error("Could not list trash", { message: error instanceof Error ? error.message : "Unknown error" });
+        logger.error("Could not list trash", { message: error instanceof Error ? error.message : "Unknown error" });
         return fail("service_unavailable", "Could not list trash.", 503);
     }
 }

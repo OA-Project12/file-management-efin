@@ -1,3 +1,4 @@
+import { logger } from "@/infrastructure/security/logger.mjs";
 import { auditRoute } from "@/infrastructure/audit/audit-route";
 import { RequestFileDeletion } from "@/application/files/request-file-deletion";
 import { authenticateApplicationKey } from "@/infrastructure/auth/application-key-authenticator";
@@ -87,7 +88,7 @@ async function handlePOST(request: Request, context: { params: Promise<{ fileId:
         );
     } catch (error) {
         const serviceError = error as { code?: string; message?: string };
-        console.error("Could not request file deletion", {
+        logger.error("Could not request file deletion", {
             code: serviceError.code,
             message: serviceError.message ?? "Unknown file deletion error",
         });

@@ -1,3 +1,5 @@
+import { logger } from "@/infrastructure/security/logger.mjs";
+import { boundedFetch } from "@/infrastructure/security/supabase-fetch.mjs";
 import { auditRoute } from "@/infrastructure/audit/audit-route";
 import { createClient } from "@supabase/supabase-js";
 import { authenticateApplicationKey } from "@/infrastructure/auth/application-key-authenticator";
@@ -41,7 +43,7 @@ async function handlePOST(request: Request): Promise<Response> {
         const url = process.env.SUPABASE_URL;
         const secret = process.env.SUPABASE_SECRET_KEY;
         if (!url || !secret) throw new Error("Supabase Auth is not configured.");
-        const auth = createClient(url, secret, { auth: { persistSession: false, autoRefreshToken: false } });
+        const auth = createClient(url, secret, { auth: { persistSession: false, autoRefreshToken: false }, global: { fetch: boundedFetch } });
         const { data, error } = await auth.auth.admin.inviteUserByEmail(email, {
             redirectTo: process.env.AUTH_INVITE_REDIRECT_URL || undefined,
         });
@@ -68,7 +70,7 @@ async function handlePOST(request: Request): Promise<Response> {
             await client.query("commit");
         } catch (dbError) {
             await client.query("rollback").catch(() => undefined);
-            console.error("Invited Auth user has no tenant membership", { userId: data.user.id });
+            logger.error("Invited Auth user has no tenant membership", { userId: data.user.id });
             throw dbError;
         } finally {
             client.release();
@@ -78,7 +80,7 @@ async function handlePOST(request: Request): Promise<Response> {
             { status: 201, headers: { "Cache-Control": "no-store" } },
         );
     } catch (error) {
-        console.error("Could not invite user", { message: error instanceof Error ? error.message : "Unknown error" });
+        logger.error("Could not invite user", { message: error instanceof Error ? error.message : "Unknown error" });
         return fail("service_unavailable", "Could not invite user.", 503);
     }
 }

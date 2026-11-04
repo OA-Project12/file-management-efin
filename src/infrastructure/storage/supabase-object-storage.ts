@@ -1,3 +1,4 @@
+import { boundedFetch } from "@/infrastructure/security/supabase-fetch.mjs";
 import "server-only";
 import { createClient, type SupabaseClient } from "@supabase/supabase-js";
 import type { DownloadGrant, ObjectStorage, StoredObjectInfo, UploadGrant } from "@/application/files/ports/object-storage";
@@ -15,6 +16,7 @@ function getStorageClient(): SupabaseClient {
 
     client = createClient(supabaseUrl, secretKey, {
         auth: { persistSession: false, autoRefreshToken: false },
+        global: { fetch: boundedFetch },
     });
     return client;
 }

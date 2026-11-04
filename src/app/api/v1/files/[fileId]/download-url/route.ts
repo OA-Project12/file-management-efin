@@ -1,3 +1,4 @@
+import { logger } from "@/infrastructure/security/logger.mjs";
 import { auditRoute } from "@/infrastructure/audit/audit-route";
 import { CreateFileDownloadGrant } from "@/application/files/create-file-download-grant";
 import { authenticateApplicationKey } from "@/infrastructure/auth/application-key-authenticator";
@@ -75,7 +76,7 @@ async function handlePOST(request: Request, context: { params: Promise<{ fileId:
         return Response.json({ data: grant }, { headers: { "Cache-Control": "no-store" } });
     } catch (error) {
         const serviceError = error as { code?: string; message?: string };
-        console.error("Could not create download URL", {
+        logger.error("Could not create download URL", {
             code: serviceError.code,
             message: serviceError.message ?? "Unknown download URL error",
         });

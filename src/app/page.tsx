@@ -100,6 +100,7 @@ function DmsApplication() {
           code: body.error?.code,
           status: response.status,
           details: body.error?.details,
+          retryAfter: Number(response.headers.get("Retry-After")) || undefined,
         });
       }
       return body;

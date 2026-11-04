@@ -35,6 +35,7 @@ export type Api = <T = Record<string, unknown>>(
   init?: RequestInit,
 ) => Promise<{ data: T }>;
 export type ApiError = Error & {
+  retryAfter?: number;
   code?: string;
   status?: number;
   details?: Record<string, unknown>;
@@ -88,6 +89,11 @@ const messages: Record<string, string> = {
     "พื้นที่หน่วยงานปลายทางไม่พอ กรุณาติดต่อผู้ดูแลหรือรอให้การลบถาวรเสร็จ",
   storage_maintenance:
     "ระบบพักการเปลี่ยนแปลงชั่วคราว คุณยังค้นหาและเปิดดูเอกสารได้ โปรดลองภายหลัง",
+  rate_limited: "ส่งคำขอถี่เกินไป กรุณารอก่อนลองใหม่",
+  request_timeout: "ใช้เวลาอ่านคำขอนานเกินไป กรุณาลองใหม่",
+  request_too_large: "ข้อมูลคำขอมีขนาดใหญ่เกินกำหนด กรุณาลดขนาดข้อมูล",
+  unsupported_media_type: "กรุณาส่งข้อมูลคำขอในรูปแบบ JSON",
+  security_control_unavailable: "ระบบตรวจความปลอดภัยไม่พร้อมใช้งาน กรุณาลองภายหลัง",
   service_unavailable: "ยังดำเนินการไม่ได้ โปรดตรวจผลก่อนส่งอีกครั้ง",
   audit_unavailable: "บันทึกประวัติไม่สำเร็จ โปรดตรวจผลก่อนส่งอีกครั้ง",
   admin_protected: "บัญชีผู้ดูแลองค์กรต้องจัดการผ่านช่องทางเฉพาะ",
@@ -100,6 +106,8 @@ const messages: Record<string, string> = {
 };
 export function errorText(error: unknown) {
   const value = error as ApiError;
+  if (value?.code === "rate_limited" && Number.isFinite(value.retryAfter) && value.retryAfter! > 0)
+    return `ส่งคำขอถี่เกินไป กรุณารอ ${value.retryAfter} วินาทีก่อนลองใหม่`;
   if (value?.code)
     return (
       messages[value.code] ?? "ดำเนินการไม่สำเร็จ กรุณาตรวจข้อมูลและลองใหม่"

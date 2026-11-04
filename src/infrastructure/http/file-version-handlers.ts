@@ -1,3 +1,4 @@
+import { logger } from "@/infrastructure/security/logger.mjs";
 import "server-only";
 import { randomUUID } from "node:crypto";
 import { connection } from "next/server";
@@ -42,8 +43,8 @@ async function body(request: Request): Promise<Record<string, unknown>> {
     }
 }
 
-async function scope(request: Request, owner: unknown, write: boolean): Promise<VersionScope> {
-    const app = await authenticateApplicationKey(request);
+async function scope(request: Request, owner: unknown, write: boolean, refresh = false): Promise<VersionScope> {
+    const app = await authenticateApplicationKey(request, refresh);
     if (!app) throw new VersionError("unauthorized", 401);
     if (!app.scopes.includes(write ? "files:write" : "files:read")) throw new VersionError("forbidden", 403);
     const ownerSubject = app.userId ? null : typeof owner === "string" ? owner.trim() : "";
@@ -55,7 +56,7 @@ function failure(error: unknown) {
     const quota = storageQuotaErrorResponse(error);
     if (quota) return quota;
     const known = error instanceof VersionError;
-    if (!known) console.error("File version operation failed", { message: error instanceof Error ? error.message : "Unknown error" });
+    if (!known) logger.error("File version operation failed", { message: error instanceof Error ? error.message : "Unknown error" });
     const code = known ? error.code : "service_unavailable";
     const message =
         code === "version_conflict"
@@ -237,7 +238,7 @@ export async function restoreVersion(request: Request, context: Context) {
         if (!copied || copied.sizeBytes !== info.sizeBytes || (copied.contentType ?? contentType) !== contentType)
             throw new VersionError("object_changed", 409);
         // A restore can spend time copying; refresh membership/key validity before publishing it.
-        const latestAuth = await scope(request, input.ownerSubject, true);
+        const latestAuth = await scope(request, input.ownerSubject, true, true);
         const rejected = await repository.completeRestore(fileId, versionId, latestAuth);
         if (rejected) throw new StorageQuotaError(rejected);
         return json(
@@ -266,7 +267,7 @@ export async function restoreVersion(request: Request, context: Context) {
                 if (safeToRemove) await storage.deleteObject(bucketId, objectKey);
             } catch {
                 // Keep the tracked pending/failed row for cleanup; never risk removing a committed current object.
-                console.error("Restore copy needs cleanup", { fileId, versionId });
+                logger.error("Restore copy needs cleanup", { fileId, versionId });
             }
         }
         return failure(error);

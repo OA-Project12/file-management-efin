@@ -1,3 +1,4 @@
+import { logger } from "@/infrastructure/security/logger.mjs";
 import { auditRoute } from "@/infrastructure/audit/audit-route";
 import { authenticateApplicationKey } from "@/infrastructure/auth/application-key-authenticator";
 import { ManageDepartmentQuotas } from "@/application/storage/manage-department-quotas";
@@ -17,7 +18,7 @@ async function handleGET(request: Request): Promise<Response> {
     } catch (error) {
         const response = storageQuotaErrorResponse(error);
         if (response) return response;
-        console.error("Could not list storage quotas");
+        logger.error("Could not list storage quotas");
         return Response.json(
             { error: { code: "service_unavailable", message: "Could not list storage quotas." } },
             { status: 503, headers: { "Cache-Control": "no-store" } },

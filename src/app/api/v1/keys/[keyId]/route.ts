@@ -1,3 +1,4 @@
+import { logger } from "@/infrastructure/security/logger.mjs";
 import { auditRoute } from "@/infrastructure/audit/audit-route";
 import { authenticateApplicationKey } from "@/infrastructure/auth/application-key-authenticator";
 import { PostgresApplicationKeyRepository } from "@/infrastructure/database/postgres-application-key-repository";
@@ -45,7 +46,7 @@ async function handleDELETE(request: Request, { params }: { params: Promise<{ ke
         );
     } catch (error) {
         const databaseError = error as { code?: string; message?: string };
-        console.error("Could not revoke application key", {
+        logger.error("Could not revoke application key", {
             code: databaseError.code,
             message: databaseError.message ?? "Unknown key revocation error",
         });

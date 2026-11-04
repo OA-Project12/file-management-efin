@@ -1,3 +1,4 @@
+import { logger } from "@/infrastructure/security/logger.mjs";
 import { auditRoute } from "@/infrastructure/audit/audit-route";
 import { RequestFileUpload } from "@/application/files/request-file-upload";
 import { storageQuotaErrorResponse } from "@/infrastructure/http/storage-quota-errors";
@@ -141,7 +142,7 @@ async function handlePOST(request: Request): Promise<Response> {
         const quota=storageQuotaErrorResponse(error);
         if(quota) return quota;
         const serviceError = error as { code?: string; message?: string };
-        console.error("Could not create upload intent", {
+        logger.error("Could not create upload intent", {
             code: serviceError.code,
             message: serviceError.message ?? "Unknown upload intent error",
         });

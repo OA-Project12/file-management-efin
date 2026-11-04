@@ -1,3 +1,4 @@
+import { validateAuditDetails } from "@/infrastructure/security/logger.mjs";
 import "server-only";
 import { randomUUID } from "node:crypto";
 import { AsyncLocalStorage } from "node:async_hooks";
@@ -31,12 +32,12 @@ export async function recordAudit(app: AuthenticatedApplication, event: AuditEve
         event.resourceType ?? null,
         event.resourceId ?? null,
         event.requestId ?? auditRequestContext.getStore() ?? randomUUID(),
-        JSON.stringify(event.details ?? {}),
+        JSON.stringify(validateAuditDetails(event.details ?? {})),
     ];
     await (client ?? getDatabasePool()).query(sql, values);
 }
 
-export async function recordUnidentifiedDenial(action: string, route: string, status: number, requestId = randomUUID()): Promise<void> {
+export async function recordUnidentifiedDenial(action: string, route: string, status: number, requestId: string = randomUUID()): Promise<void> {
     await getDatabasePool().query(
         `insert into filesvc.audit_security_events (action, outcome, request_id, route, status)
      values ($1, 'denied', $2, $3, $4)`,

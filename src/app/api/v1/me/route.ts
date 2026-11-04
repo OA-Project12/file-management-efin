@@ -1,3 +1,4 @@
+import { logger } from "@/infrastructure/security/logger.mjs";
 import { auditRoute } from "@/infrastructure/audit/audit-route";
 import { authenticateApplicationKey } from "@/infrastructure/auth/application-key-authenticator";
 
@@ -32,7 +33,7 @@ async function handleGET(request: Request): Promise<Response> {
         );
     } catch (error) {
         const databaseError = error as { code?: string; message?: string };
-        console.error("Application key authentication failed", {
+        logger.error("Application key authentication failed", {
             code: databaseError.code,
             message: databaseError.message ?? "Unknown authentication error",
         });

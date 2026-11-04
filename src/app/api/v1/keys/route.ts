@@ -1,3 +1,4 @@
+import { logger } from "@/infrastructure/security/logger.mjs";
 import { auditRoute } from "@/infrastructure/audit/audit-route";
 import { createHash, randomBytes } from "node:crypto";
 import { authenticateApplicationKey } from "@/infrastructure/auth/application-key-authenticator";
@@ -88,7 +89,7 @@ async function handleGET(request: Request): Promise<Response> {
         return Response.json({ data: { items: keys.map(presentKey) } }, { headers: { "Cache-Control": "no-store" } });
     } catch (error) {
         const databaseError = error as { code?: string; message?: string };
-        console.error("Could not list application keys", {
+        logger.error("Could not list application keys", {
             code: databaseError.code,
             message: databaseError.message ?? "Unknown key listing error",
         });
@@ -194,7 +195,7 @@ async function handlePOST(request: Request): Promise<Response> {
         );
     } catch (error) {
         const databaseError = error as { code?: string; message?: string };
-        console.error("Could not create application key", {
+        logger.error("Could not create application key", {
             code: databaseError.code,
             message: databaseError.message ?? "Unknown key creation error",
         });

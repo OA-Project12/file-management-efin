@@ -3,6 +3,7 @@ import { createHash, timingSafeEqual } from "node:crypto";
 import type { QueryResultRow } from "pg";
 import type { AuthenticatedApplication, DepartmentGrant } from "@/application/auth/authenticated-application";
 import { getDatabasePool } from "@/infrastructure/database/pool";
+import { boundedFetch } from "@/infrastructure/security/supabase-fetch.mjs";
 import { createClient } from "@supabase/supabase-js";
 
 interface ApplicationKeyRow extends QueryResultRow {
@@ -15,7 +16,14 @@ interface ApplicationKeyRow extends QueryResultRow {
 
 const API_KEY_PATTERN = /^fsvc_([a-f0-9]{12})\.([A-Za-z0-9_-]{43})$/i;
 
-export async function authenticateApplicationKey(request: Request): Promise<AuthenticatedApplication | null> {
+const identities = new WeakMap<Request, Promise<AuthenticatedApplication | null>>();
+export function authenticateApplicationKey(request: Request, refresh = false): Promise<AuthenticatedApplication | null> {
+    if (refresh) identities.delete(request);
+    let pending = identities.get(request);
+    if (!pending) { pending = authenticate(request); identities.set(request, pending); }
+    return pending;
+}
+async function authenticate(request: Request): Promise<AuthenticatedApplication | null> {
     const authorization = request.headers.get("authorization")?.trim() ?? "";
     const bearerMatch = /^Bearer\s+(\S+)$/i.exec(authorization);
     if (!bearerMatch || bearerMatch[1].length > 8192) return null;
@@ -110,7 +118,7 @@ async function authenticateUserToken(token: string): Promise<AuthenticatedApplic
     const secret = process.env.SUPABASE_SECRET_KEY;
     const applicationId = process.env.AUTH_APPLICATION_ID;
     if (!url || !secret || !applicationId) return null;
-    const auth = createClient(url, secret, { auth: { persistSession: false, autoRefreshToken: false } });
+    const auth = createClient(url, secret, { auth: { persistSession: false, autoRefreshToken: false }, global: { fetch: boundedFetch } });
     const { data, error } = await auth.auth.getClaims(token);
     const userId = data?.claims?.sub;
     if (error || typeof userId !== "string") return null;

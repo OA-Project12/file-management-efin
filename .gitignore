@@ -47,3 +47,16 @@ yarn-error.log*
 # typescript
 *.tsbuildinfo
 next-env.d.ts
+tests
+playwright.config.mjs
+.gitleaks.toml
+eslint.config.mjs
+railway.variables.example
+scripts/check-dms-design-ui.mjs
+scripts/setup-security-fixtures.mjs
+scripts/run-security-checks.mjs
+scripts/check-version-ui.mjs
+scripts/check-version-repository.mjs
+scripts/check-quota-ui.mjs
+scripts/check-quota-api.mjs
+scripts/check-file-search.mjs

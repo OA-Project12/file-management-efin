@@ -1,3 +1,4 @@
+import { logger } from "@/infrastructure/security/logger.mjs";
 import { auditRoute } from "@/infrastructure/audit/audit-route";
 import { authenticateApplicationKey } from "@/infrastructure/auth/application-key-authenticator";
 import { canSeeFile } from "@/application/auth/folder-visibility";
@@ -67,7 +68,7 @@ async function handlePOST(request: Request, context: { params: Promise<{ fileId:
         );
     } catch (error) {
         const serviceError = error as { code?: string; message?: string };
-        console.error("Could not create preview URL", {
+        logger.error("Could not create preview URL", {
             code: serviceError.code,
             message: serviceError.message ?? "Unknown preview URL error",
         });

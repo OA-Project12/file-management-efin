@@ -1,3 +1,4 @@
+import { logger } from "@/infrastructure/security/logger.mjs";
 import { auditRoute } from "@/infrastructure/audit/audit-route";
 import { authenticateApplicationKey } from "@/infrastructure/auth/application-key-authenticator";
 import { getDatabasePool } from "@/infrastructure/database/pool";
@@ -97,7 +98,7 @@ async function handlePATCH(request: Request, { params }: { params: Promise<{ use
             { headers: { "Cache-Control": "no-store" } },
         );
     } catch (error) {
-        console.error("Could not update user access", { message: error instanceof Error ? error.message : "Unknown error" });
+        logger.error("Could not update user access", { message: error instanceof Error ? error.message : "Unknown error" });
         return fail("service_unavailable", "Could not update user access.", 503);
     }
 }

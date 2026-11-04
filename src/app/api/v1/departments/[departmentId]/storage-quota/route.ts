@@ -1,3 +1,4 @@
+import { logger } from "@/infrastructure/security/logger.mjs";
 import { auditRoute } from "@/infrastructure/audit/audit-route";
 import { authenticateApplicationKey } from "@/infrastructure/auth/application-key-authenticator";
 import { ManageDepartmentQuotas,canManageStorageQuota } from "@/application/storage/manage-department-quotas";
@@ -23,7 +24,7 @@ async function handlePATCH(request:Request,{params}:{params:Promise<{departmentI
         return Response.json({data},{headers:{'Cache-Control':'no-store'}});
     }catch(error){
         const response=storageQuotaErrorResponse(error);if(response)return response;
-        console.error('Could not set storage quota');return fail('service_unavailable','Could not set storage quota.',503);
+        logger.error('Could not set storage quota');return fail('service_unavailable','Could not set storage quota.',503);
     }
 }
 export const PATCH=auditRoute('department.quota_update','department',handlePATCH,{recordSuccess:false});

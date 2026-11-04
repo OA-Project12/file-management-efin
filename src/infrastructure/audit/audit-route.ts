@@ -1,5 +1,6 @@
+import { logger } from "@/infrastructure/security/logger.mjs";
 import "server-only";
-import { randomUUID } from "node:crypto";
+import { securityRoute } from "@/infrastructure/security/api-guard";
 import { authenticateApplicationKey } from "@/infrastructure/auth/application-key-authenticator";
 import { auditRequestContext, recordAudit, recordUnidentifiedDenial } from "@/infrastructure/audit/record-audit";
 import { enterStorageMutation,isStorageMutation } from "@/infrastructure/storage/storage-maintenance.mjs";
@@ -12,12 +13,12 @@ export function auditRoute<Args extends unknown[]>(
     handler: (request: Request, ...args: Args) => Promise<Response>,
     options: { signedUrl?: boolean; recordSuccess?: boolean } = {},
 ): (request: Request, ...args: Args) => Promise<Response> {
-    return async (request, ...args) => {
+    return securityRoute(async (request, ...args) => {
         const release=isStorageMutation(action)?enterStorageMutation():undefined;
         if(release===null) return Response.json({error:{code:"storage_maintenance",message:"Storage maintenance is in progress. Please try again shortly."}},
             {status:503,headers:{"Cache-Control":"no-store","Retry-After":"60"}});
         try {
-        const requestId = randomUUID();
+        const requestId = auditRequestContext.getStore()!;
         const before = options.recordSuccess !== false ? await authenticateApplicationKey(request).catch(() => null) : null;
         const response = await auditRequestContext.run(requestId, () => handler(request, ...args));
         const denied = [401, 403, 404].includes(response.status);
@@ -53,7 +54,7 @@ export function auditRoute<Args extends unknown[]>(
                 details: success ? {} : { status: response.status },
             });
         } catch (error) {
-            console.error("Audit recording failed", { action, route, message: error instanceof Error ? error.message : "Unknown error" });
+            logger.error("Audit recording failed", { action, route, message: error instanceof Error ? error.message : "Unknown error" });
             if (success && options.signedUrl)
                 return Response.json(
                     { error: { code: "audit_unavailable", message: "Could not record access." } },
@@ -62,5 +63,5 @@ export function auditRoute<Args extends unknown[]>(
         }
         return response;
         } finally { release?.(); }
-    };
+    });
 }
