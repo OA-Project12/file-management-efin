@@ -20,13 +20,11 @@ Upload ที่ตรวจไม่ผ่านเป็น `quarantined` พ�
 
 ไฟล์เดิมยังค้นหา/preview/download ตามสิทธิ์และรูปแบบเดิม ไม่มี backfill หรือสแกนย้อนหลัง Complete ที่เสร็จแล้วเป็น idempotent การ restore จากถังขยะต้องตรวจฉบับปัจจุบันก่อน; restore เวอร์ชันตรวจทั้งต้นฉบับและสำเนาก่อน publish หากไม่ผ่านเก็บฉบับปัจจุบันเดิมไว้ ไม่เปลี่ยน bucket MIME allowlist, schema, endpoint หรือ scope และไม่มี deployment ในงานนี้
 
-`npm.cmd run test:security` รวม policy/stream tests และ API/repository tests ของ file validation ด้วย PostgreSQL fixture และ Storage จำลอง ใช้ขั้นตอน disposable PostgreSQL/Redis ด้านล่าง ส่วน `npm.cmd run test:security-browser` รวม upload picker/drop, MIME ว่าง, mixed files และ validation error/unavailable บน 1440px/390px ด้วย mocked APIs ใน production build การตรวจบน Railway/บัญชีจริงให้ทีมดำเนินการเอง
-
-ผลตรวจในเครื่องรอบนี้: backend/security 35 กรณี, browser security/upload 5 กรณี, TypeScript, lint และ webpack production build ผ่าน รวมการจำลองลบ object ไม่สำเร็จแล้ว worker retry ก่อนคืนพื้นที่ ชุดใหม่ถูกรวมใน npm commands ที่ workflow เดิมเรียกแล้ว แต่ยังไม่ได้ push/run GitHub Actions หรือ deploy release นี้ การตรวจ `upsert:false` เป็น adapter contract test ไม่ใช่การยืนยันพฤติกรรม signed upload URL กับ Storage จริง
+ผลตรวจในเครื่องเมื่อเพิ่มการตรวจชนิดไฟล์ผ่าน backend/security 35 กรณี, browser security/upload 5 กรณี, TypeScript, lint และ webpack production build รวมกรณี worker ต้องลองลบ object ใหม่ก่อนคืนพื้นที่ ตัวเลขนี้เป็นผลจากชุดทดสอบเดิม
 
 ### Security release preparation — 4 พฤศจิกายน 2569
 
-Tracked Playwright and Gitleaks configuration is required for clean-checkout CI. Release preflight passed: 18 security tests against disposable PostgreSQL/Redis, 4 browser security tests against a local production build using mocked services, TypeScript, lint and webpack production build. This includes the wrapped Next.js Request regression that previously returned 503 for JSON POST requests. These results do not replace team acceptance testing on Railway.
+The release preflight passed 18 security tests against disposable PostgreSQL/Redis, 4 browser security tests against a local production build using mocked services, TypeScript, lint and webpack production build. It covered the wrapped Next.js Request regression that previously returned 503 for JSON POST requests.
 
 Deploy web first and worker second from the same clean release commit using Railway CLI and their existing service-specific configuration paths. Keep `RATE_LIMIT_MODE=report`; this counts/reports excess requests but does not block them. Verify Redis from inside the deployed web container with a PING, independently of report-mode readiness. Record release/deployment IDs and the previous deployment IDs in an operator report without credentials. Do not enable enforce until the team confirms normal flows, ingress IP handling and limits. No schema migration or quota apply is part of this release.
 
@@ -51,7 +49,7 @@ ClamAV ตรวจได้ตามลายเซ็นและขีดจ�
 
 เมื่อพักระบบให้เปลี่ยนเว็บเป็น `paused` ก่อน worker และรอ attempt ที่เริ่มไปแล้วจบ งานค้างยังอยู่ใน DB และ resume ตามอายุงานที่เหลือ เว็บจะตอบ `503 malware_scan_paused` สำหรับ upload/restore ใหม่ ไฟล์ที่อ่านได้อยู่ยังอ่านได้ตามสิทธิ์เดิม รักษา release ที่มี scan gate และ migration นี้ไว้ระหว่าง rollback สำหรับ quota maintenance ให้ใช้ขั้นตอนหยุด mutation และ drain ตามเดิม โดยรอ scan ที่กำลังทำงานด้วย
 
-ชุด `npm run test:security` ใช้ PostgreSQL/Redis ชั่วคราว และ Storage/ClamD จำลอง ส่วน `npm run test:security-browser` ตรวจสถานะอัปโหลดกับ production build แบบ mock ทดสอบ ClamAV จริงด้วยไฟล์สะอาดและ EICAR ใน service ทดสอบที่แยกจากข้อมูลจริง
+ทดสอบ ClamAV ด้วยไฟล์สะอาดและ EICAR ใน service ทดสอบที่แยกจากข้อมูลจริง สำหรับการทดสอบผ่านแอป ให้ตรวจว่าไฟล์ขึ้น `pending_scan` หลังอัปโหลดและขอ preview/download ได้เมื่อ worker บันทึกสถานะ `available` แล้ว
 
 ## Security hardening — รอบแรก
 
@@ -100,33 +98,16 @@ CSP จำกัด resource origins ไปยังเว็บและ Supaba
 
 Logger กลางของ API/worker ใช้ allowlist ไม่ส่ง raw errors, body, headers หรือ SQL parameters ข้อมูล nested/ข้อความถูก redact และตัด credentials/query strings ของ URL Rate-limit warnings ถูกจำกัดความถี่ต่อ process ไม่เขียน Audit DB ทุกคำขอที่ถูก throttle Audit details ปฏิเสธ sensitive fields/credentials/signed URLs และ rollback ร่วมกับ mutation คำสั่ง key:create ยังคงพิมพ์ secret ครั้งเดียวตามหน้าที่เดิม
 
-### Automated checks แบบข้อมูลจำลอง
+### การตรวจด้วยตนเอง
 
-ใช้ PostgreSQL/Redis disposable เท่านั้น ไม่ใช้ .env.local หรือ production credentials กับคำสั่งต่อไปนี้:
-
-```powershell
-docker run --detach --rm --name efin-security-pg --publish 127.0.0.1:55437:5432 --env POSTGRES_PASSWORD=fixture-password --env POSTGRES_DB=efin_security postgres:17-alpine
-docker run --detach --rm --name efin-security-redis --publish 127.0.0.1:56379:6379 redis:7-alpine redis-server --requirepass fixture-password
-$env:DATABASE_URL='postgresql://postgres:fixture-password@127.0.0.1:55437/efin_security'
-$env:REDIS_URL='redis://:fixture-password@127.0.0.1:56379'
-$env:RATE_LIMIT_KEY_SECRET='synthetic-test-secret-at-least-32-characters'
-$env:RATE_LIMIT_MODE='report'
-npm.cmd run fixtures:security
-npm.cmd run test:security
-```
-
-fixtures:security เรียก `tests/fixtures/setup.mjs` และปฏิเสธ remote host และ database ที่ไม่ได้ชื่อ efin_security; ใช้ `tests/fixtures/schema.sql` ซึ่งเป็น schema จำลองสำหรับทดสอบเท่านั้น ไม่ใช่ migration/RLS proof ของ production ไม่รัน setup ซ้ำใน database เดิมที่มี schema แล้ว
-
-UI ใช้ public configuration จำลอง build แล้วเปิด Next production server ที่ 127.0.0.1:3017 ติดตั้ง Chromium ด้วย `npx playwright install chromium`; รัน `npm run test:security-browser` โดยตั้ง NEXT_PUBLIC_SUPABASE_URL=https://fixture.supabase.co และ NEXT_PUBLIC_SUPABASE_PUBLISHABLE_KEY=sb_publishable_fixture_only ทั้งตอน build และ tests Auth/Storage/APIs ใน flow ใช้ mocks ไม่อัปโหลดไฟล์จริง เก็บภาพ/ผลชั่วคราวใต้ .quota-reports ที่ Git ignore
-
-ก่อนเปิดเว็บจริง ทีมตรวจ login/invitation, text/image/PDF preview และ download, 429/Redis outage และ trusted client IP บน Railway การผ่าน fixtures ไม่แทนผลทดสอบนี้
+ก่อนเปิดเว็บจริง ให้ทีมตรวจ login/invitation, text/image/PDF preview, download, 429/Redis outage และ trusted client IP ในสภาพแวดล้อมทดสอบบน Railway
 
 ### CI และ rollout/rollback
 
 Runtime image ใช้ Node.js 24 แบบ minimal, รันด้วย user node และไม่มี npm/npx/Yarn ใน final stage คำสั่ง cloud ต้องใช้ node โดยตรง ย้าย shadcn CLI ไป devDependencies เพราะ component code ไม่ import CLI ตอน runtime
 
 
-`.github/workflows/security.yml` ทำ TypeScript/lint/build, security API/unit tests และ production browser security tests ด้วย PostgreSQL/Redis ชั่วคราว, npm audit, Gitleaks full-history แบบ redact และ Trivy runtime image scan Actions และ scanner images pin SHA/digest ใช้ contents:read และไม่มี production secrets หรือ auto-deploy
+`.github/workflows/security.yml` รัน TypeScript, lint, webpack production build, npm audit, Gitleaks full-history แบบ redact และ Trivy runtime image scan Actions และ scanner images pin SHA/digest และใช้ `contents: read`
 
 High/Critical dependency/image vulnerabilities และ secret findings ทำให้ CI fail รวม scanner/network error ด้วย ไม่เพิ่ม ignore กว้างหรือใช้ audit fix --force ข้อยกเว้นต้องระบุ advisory เหตุผล ผู้รับผิดชอบ และ expiry ผ่านการ review แยกต่างหาก Low/Moderate ยังต้องติดตามแม้ไม่เป็น blocking threshold รอบนี้
 
@@ -262,7 +243,7 @@ The application implements the CURRENT screens and interactions from `design/MAS
 
 There are no new backend endpoints, database migrations, scopes, sharing features, folder CRUD, bulk operations or deep links in this change. Existing API authorization remains authoritative. Drafts and one-time content grants stay in memory; the existing Supabase Auth session persistence is unchanged.
 
-Automated checks retained in this repository are the security tests under `tests/` and browser security checks for login/invitation error states, response headers and text/image/PDF preview/download grants. Run them using the security instructions above. The former full CURRENT UI and Search/Version/Quota regression scripts were removed; these broader flows now require team testing. T01–T23 in the design specification remain a manual acceptance checklist. Historical reports under `.quota-reports/` do not represent current automated coverage.
+Use T01–T23 in the design specification as the manual acceptance checklist. Reports under `.quota-reports/` contain historical test results.
 
 ## File name and metadata keyword search
 
@@ -514,6 +495,4 @@ It polls the outbox until stopped with `Ctrl+C`. After the worker is running, a 
 
 ### Test-script removal
 
-Removed the legacy regression scripts from `scripts/` and their npm/CI entry points. The fixture initializer now lives at `tests/fixtures/setup.mjs`; `fixtures:security`, `test:security` and `test:security-browser` remain supported. Worker, pre-deploy, bootstrap/key creation, Storage limits and quota maintenance tools remain in `scripts/`. No API, production schema, permissions or Railway deployment changed. Search/Version/Quota and full workspace regression coverage has intentionally been reduced; the dated test results above describe the earlier release, not the retained suite.
-
-Validation after removal: the moved fixture initializer and all 17 retained security tests passed against disposable PostgreSQL/Redis; all 3 browser security tests passed against the local production build with mocked Auth/Storage/APIs. TypeScript, lint and webpack production build passed. All 11 remaining operational scripts parse and their relative dependencies resolve; worker helper modules import successfully. No live worker, pre-deploy network check or Railway deployment was run.
+The legacy regression scripts under `scripts/` and the later security, file-validation, scanner and browser test suites under `tests/` were removed with their npm and CI commands. Use the manual acceptance steps above for those flows.

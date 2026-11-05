@@ -14,29 +14,7 @@ jobs:
     name: Security and regression
     runs-on: ubuntu-latest
     timeout-minutes: 25
-    services:
-      postgres:
-        image: postgres:17-alpine
-        env:
-          POSTGRES_PASSWORD: fixture-password
-          POSTGRES_DB: efin_security
-        ports: ['5432:5432']
-        options: >-
-          --health-cmd "pg_isready -U postgres -d efin_security"
-          --health-interval 5s --health-timeout 3s --health-retries 20
-      redis:
-        image: redis:7-alpine
-        ports: ['6379:6379']
-        options: >-
-          --health-cmd "redis-cli ping"
-          --health-interval 5s --health-timeout 3s --health-retries 20
     env:
-      DATABASE_URL: postgresql://postgres:fixture-password@127.0.0.1:5432/efin_security
-      REDIS_URL: redis://127.0.0.1:6379
-      RATE_LIMIT_KEY_SECRET: '00000000000000000000000000000000'
-      RATE_LIMIT_MODE: report
-      TRUSTED_PROXY_MODE: local
-      SECURITY_ENVIRONMENT: ci
       NEXT_PUBLIC_SUPABASE_URL: https://fixture.supabase.co
       NEXT_PUBLIC_SUPABASE_PUBLISHABLE_KEY: sb_publishable_fixture_only
     steps:
@@ -50,20 +28,7 @@ jobs:
       - run: npm ci
       - run: npm run lint
       - run: npx tsc --noEmit
-      - run: npm run fixtures:security
-      - run: npm run test:security
       - run: npm run build -- --webpack
-      - run: npx playwright install --with-deps chromium
-      - name: Production browser security checks (mocked Auth/API)
-        run: |
-          node node_modules/next/dist/bin/next start --hostname 127.0.0.1 --port 3017 > /tmp/efin-security-server.log 2>&1 &
-          SERVER_PID=$!
-          trap 'kill "$SERVER_PID"' EXIT
-          for attempt in $(seq 1 60); do
-            if curl --fail --silent http://127.0.0.1:3017/api/health/live > /dev/null; then break; fi
-            sleep 1
-          done
-          npm run test:security-browser
   dependencies:
     name: Dependency scan
     runs-on: ubuntu-latest

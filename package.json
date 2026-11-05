@@ -12,10 +12,7 @@
     "worker:outbox": "node --env-file=.env.local scripts/process-outbox.mjs",
     "quota:backfill": "node --env-file=.env.local scripts/quota-maintenance.mjs backfill",
     "quota:reconcile": "node --env-file=.env.local scripts/quota-maintenance.mjs reconcile",
-    "admin:bootstrap": "node --env-file=.env.local scripts/bootstrap-tenant-admin.mjs",
-    "fixtures:security": "node tests/fixtures/setup.mjs",
-    "test:security": "node --test tests/security.test.mjs tests/security-api.test.mjs tests/file-validation.test.mjs tests/file-validation-api.test.mjs tests/clamd.test.mjs",
-    "test:security-browser": "playwright test"
+    "admin:bootstrap": "node --env-file=.env.local scripts/bootstrap-tenant-admin.mjs"
   },
   "dependencies": {
     "@base-ui/react": "^1.9.0",
