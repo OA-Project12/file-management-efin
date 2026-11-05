@@ -21,6 +21,8 @@ export interface TrashPagePosition {
 }
 
 export interface TrashedObject {
+    originalName: string;
+    contentType: string;
     bucketId: string;
     objectKey: string;
 }
@@ -58,6 +60,6 @@ export interface FileRepository {
     requestDelete(fileId: string, scope: FileScope): Promise<FileDeletionRequestResult>;
     listTrash(scope: FileScope, limit: number, before?: TrashPagePosition, departmentId?: string): Promise<FileListItem[]>;
     findTrashedObject(fileId: string, scope: FileScope): Promise<TrashedObject | null>;
-    restore(fileId: string, scope: FileScope): Promise<"restored" | "not_found">;
-    requestPurge(fileId: string, scope: FileScope): Promise<"queued" | "not_found">;
+    restore(fileId: string, scope: FileScope, checked: TrashedObject, expected: import("./object-storage").StoredObjectInfo, validationDetails?: Record<string, string | null>): Promise<import("@/infrastructure/database/malware-scan-jobs").ScanJob | "not_found">;
+    requestPurge(fileId: string, scope: FileScope): Promise<"queued" | "not_found" | "scan_in_progress">;
 }

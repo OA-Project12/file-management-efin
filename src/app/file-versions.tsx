@@ -1,5 +1,7 @@
 "use client";
 
+import { FILE_ACCEPT, browserUploadMime } from "@/domain/files/file-validation";
+import { errorText } from "@/components/dms/model";
 import { useCallback, useEffect, useRef, useState } from "react";
 import {
   Download,
@@ -12,6 +14,7 @@ import {
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
 import { DialogShell } from "@/components/ui/dialog-shell";
+import { ScanProgress, scanPending, type ScanReceipt } from "@/components/dms/scan-progress";
 import { SignedPreview } from "@/components/dms/preview";
 
 type Version = {
@@ -58,11 +61,13 @@ const size = (value: string | number) =>
 const statusLabel: Record<string, string> = {
   available: "พร้อมใช้งาน",
   pending_upload: "รอยืนยัน",
+  pending_scan: "รอสแกน",
   failed: "ไม่สำเร็จ",
   quarantined: "ถูกระงับ",
 };
 const codeOf = (error: unknown) => (error as { code?: string })?.code;
 function message(error: unknown) {
+  if (["file_type_not_allowed", "file_signature_invalid", "file_type_mismatch", "file_validation_unavailable"].includes(codeOf(error) ?? "")) return errorText(error);
   const labels: Record<string, string> = {
     department_quota_exceeded:
       "พื้นที่ของหน่วยงานไม่พอ กรุณาติดต่อผู้ดูแลหรือรอให้การลบถาวรเสร็จ",
@@ -109,6 +114,8 @@ export function useFileVersionsView({
   const [error, setError] = useState("");
   const [denied, setDenied] = useState(false);
   const [feedback, setFeedback] = useState("");
+  const [receipt,setScan] = useState<ScanReceipt|null>(null);
+  const scan = enabled && receipt?.statusUrl.startsWith(`/api/v1/files/${fileId}/scan-jobs/`) ? receipt : null;
   const [operation, setOperation] = useState<string | null>(null);
   const [target, setTarget] = useState<Version | null>(null);
   const [restoreError, setRestoreError] = useState("");
@@ -274,7 +281,7 @@ export function useFileVersionsView({
     }
   }
   async function restore() {
-    if (!target || !page?.currentVersionId || !start("restore")) return;
+    if (!target || !page?.currentVersionId || scanPending(scan) || !start("restore")) return;
     setRestoreError("");
     try {
       const result = (
@@ -283,10 +290,11 @@ export function useFileVersionsView({
           body: JSON.stringify({
             expectedCurrentVersionId: page.currentVersionId,
           }),
-        })) as { data: { versionNumber: number } }
+        })) as { data: ScanReceipt & { versionNumber: number } }
       ).data;
       if (!mounted.current) return;
       setTarget(null);
+      if (result.scanId) { setScan(result); await load(); return; }
       await changed(
         `กู้คืนแล้ว · สร้างเวอร์ชัน ${result.versionNumber} จากเวอร์ชัน ${target.versionNumber}`,
       );
@@ -308,8 +316,9 @@ export function useFileVersionsView({
   }
 
   async function upload(retry = false) {
-    if (!file || !page?.currentVersionId || !start("upload")) return;
+    if (!file || !page?.currentVersionId || scanPending(scan) || !start("upload")) return;
     try {
+      const uploadMime = browserUploadMime(file);
       let id = retry ? resumeId : null;
       if (!id) {
         setUploadStage("กำลังเตรียมอัปโหลด");
@@ -320,7 +329,7 @@ export function useFileVersionsView({
             body: JSON.stringify({
               expectedCurrentVersionId: page.currentVersionId,
               originalName: file.name,
-              contentType: file.type || "application/octet-stream",
+              contentType: uploadMime,
               sizeBytes: file.size,
             }),
           })) as { data: { versionId: string; signedUrl: string } }
@@ -335,7 +344,7 @@ export function useFileVersionsView({
           request.open("PUT", intent.signedUrl);
           request.setRequestHeader(
             "Content-Type",
-            file.type || "application/octet-stream",
+            uploadMime,
           );
           request.timeout = 120000;
           request.upload.onprogress = (e) => {
@@ -359,8 +368,8 @@ export function useFileVersionsView({
         });
       }
       if (!mounted.current) return;
-      setUploadStage("กำลังตรวจสอบและยืนยัน");
-      await api(`/files/${fileId}/versions/${id}/complete`, {
+      setUploadStage("กำลังตรวจประเภทไฟล์และยืนยัน");
+      const completed = await api(`/files/${fileId}/versions/${id}/complete`, {
         method: "POST",
         body: "{}",
       });
@@ -370,6 +379,8 @@ export function useFileVersionsView({
       setUploadStage("");
       setProgress(0);
       if (fileInput.current) fileInput.current.value = "";
+      const receipt = (completed as {data:ScanReceipt}).data;
+      if (receipt.scanId) { setScan(receipt); await load(); return; }
       await changed("บันทึกเวอร์ชันใหม่แล้ว");
     } catch (e) {
       if (mounted.current) {
@@ -381,6 +392,9 @@ export function useFileVersionsView({
             "upload_intent_expired",
             "object_not_found",
             "file_too_large",
+            "file_type_not_allowed",
+            "file_signature_invalid",
+            "file_type_mismatch",
             "upload_not_pending",
             "department_quota_exceeded",
             "upload_size_exceeds_reservation",
@@ -398,6 +412,11 @@ export function useFileVersionsView({
 
   return (
     <section className="file-versions" aria-label="ประวัติเวอร์ชัน">
+      {scan && <ScanProgress key={scan.scanId} api={api} receipt={scan} onResult={(result)=>{
+        setScan(result);
+        if (result.status==="available") void changed("เวอร์ชันผ่านการสแกนและพร้อมใช้งานแล้ว");
+        else void load();
+      }} />}
       <div className="version-heading">
         <div>
           <h3>
@@ -447,18 +466,19 @@ export function useFileVersionsView({
       {canEdit && !denied && (
         <fieldset
           className="version-upload"
-          disabled={busy || loading || !page?.currentVersionId}
+          disabled={busy || scanPending(scan) || loading || !page?.currentVersionId}
         >
           <legend>อัปโหลดเวอร์ชันใหม่</legend>
           <p>
             เพิ่มฉบับแก้ไขให้เอกสารนี้
-            ชื่อแสดงผลและตำแหน่งโฟลเดอร์ยังใช้ค่าปัจจุบัน
+            ชื่อแสดงผลและตำแหน่งโฟลเดอร์ยังใช้ค่าปัจจุบัน · รับ PDF, JPG/JPEG และ PNG
           </p>
           <label htmlFor={`version-file-${fileId}`}>เลือกไฟล์ฉบับแก้ไข</label>
           <input
             ref={fileInput}
             id={`version-file-${fileId}`}
             type="file"
+            accept={FILE_ACCEPT}
             disabled={busy || Boolean(resumeId)}
             onChange={(e) => {
               const picked = e.target.files?.[0] ?? null;

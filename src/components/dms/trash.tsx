@@ -6,6 +6,7 @@ import { DialogClose, DialogShell } from "@/components/ui/dialog-shell";
 import type { Api, Department, FileRow } from "./model";
 import { canWrite, errorText, fileName, formatDate, isDenied } from "./model";
 import { FullName, LoadingRows, Notice, StatePanel } from "./common";
+import { ScanProgress, scanPending, type ScanReceipt } from "./scan-progress";
 import { useUnsavedChanges } from "./navigation-guard";
 
 export function Trash({
@@ -34,6 +35,7 @@ export function Trash({
   const [busy, setBusy] = useState<string | null>(null),
     [selected, setSelected] = useState<FileRow | null>(null),
     [receipts, setReceipts] = useState<string[]>([]);
+  const [scans,setScans] = useState<Record<string,ScanReceipt>>({});
   const serial = useRef(0),
     lock = useRef(false);
   useUnsavedChanges(false, Boolean(busy));
@@ -96,8 +98,12 @@ export function Trash({
     setBusy(file.id);
     setError("");
     try {
-      await api(`/files/${file.id}/${kind}`, { method: "POST", body: "{}" });
+      const response = await api<ScanReceipt>(`/files/${file.id}/${kind}`, { method: "POST", body: "{}" });
       setSelected(null);
+      if (kind==="restore" && response.data.scanId) {
+        setScans(current=>({...current,[file.id]:response.data}));
+        return;
+      }
       if (kind === "purge")
         setReceipts((old) => [
           ...old,
@@ -119,11 +125,15 @@ export function Trash({
   }
   const controls = (file: FileRow) => (
     <div className="actions">
+      {scans[file.id] && <ScanProgress api={api} receipt={scans[file.id]} onResult={(result)=>{
+        setScans(current=>({...current,[file.id]:result}));
+        if (result.status==="available") { onNotice("กู้คืนจากถังขยะแล้ว"); onRefresh(); void load(); }
+      }} />}
       {writeAllowed &&
         canWrite(departments.find((d) => d.id === file.departmentId)) && (
           <button
             className="secondary"
-            disabled={Boolean(busy)}
+            disabled={Boolean(busy) || scanPending(scans[file.id])}
             onClick={() => void action(file, "restore")}
           >
             <RotateCcw aria-hidden="true" />
@@ -135,7 +145,7 @@ export function Trash({
           "admin" && (
           <button
             className="danger-text"
-            disabled={Boolean(busy)}
+            disabled={Boolean(busy) || scanPending(scans[file.id])}
             onClick={() => {
               setError("");
               setSelected(file);

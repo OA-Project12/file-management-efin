@@ -10,6 +10,7 @@ STORAGE_BUCKET=private-files
 NODE_EXTRA_CA_CERTS=/app/certs/prod-ca-2021.crt
 STORAGE_QUOTA_CONTROL_DIR=/tmp/efin-dms-quota
 STORAGE_QUOTA_MAINTENANCE=0
+MALWARE_SCAN_MODE=paused
 
 # WEB ONLY: use a dedicated API login through Supabase Session Pooler.
 DATABASE_URL=postgresql://<api-login>.<project-ref>:<url-encoded-password>@<pooler-host>:5432/postgres?sslmode=verify-full
@@ -34,5 +35,7 @@ SECURITY_ENVIRONMENT=production
 
 # WORKER ONLY: different login, member of filesvc_worker.
 WORKER_DATABASE_URL=postgresql://<worker-login>.<project-ref>:<url-encoded-password>@<pooler-host>:5432/postgres?sslmode=verify-full
+CLAMD_HOST=efin-dms-clamav.railway.internal
+CLAMD_PORT=3310
 # Optional existing operator alert destination; leave unset until configured.
 # AUDIT_ALERT_WEBHOOK_URL=<operator-webhook>

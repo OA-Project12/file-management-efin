@@ -83,6 +83,7 @@ export function isStorageMutation(action) {
                 "file.search",
                 "file.trash_list",
                 "file.versions_read",
+                "file.scan_status",
                 "file.preview_url",
                 "file.download_url",
                 "file.version_preview_url",

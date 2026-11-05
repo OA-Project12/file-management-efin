@@ -6,6 +6,8 @@ import { createClient } from "@supabase/supabase-js";
 import { runObjectCleanup } from "./object-cleanup.mjs";
 import { removeStoredObjectIfPresent } from "./worker-storage.mjs";
 import { enterStorageMutation } from "../src/infrastructure/storage/storage-maintenance.mjs";
+import { runMalwareScanLoop } from "./process-malware-scans.mjs";
+import { scanStorage } from "./scan-storage.mjs";
 
 const require = createRequire(import.meta.url);
 const { Pool } = require("pg");
@@ -43,11 +45,14 @@ const supabase = createClient(supabaseUrl, supabaseSecretKey, {
 });
 
 let stopping = false;
+const stoppingSignal = new AbortController();
 process.on("SIGINT", () => {
     stopping = true;
+    stoppingSignal.abort();
 });
 process.on("SIGTERM", () => {
     stopping = true;
+    stoppingSignal.abort();
 });
 
 function sleep(milliseconds) {
@@ -155,6 +160,10 @@ async function processEvent(event) {
 
 async function main() {
     logger.info("Outbox worker started.");
+    const scanLoop = runMalwareScanLoop(pool, (signal) => scanStorage(createClient(supabaseUrl,supabaseSecretKey,{
+        auth:{persistSession:false,autoRefreshToken:false},
+        global:{fetch:(input,init)=>fetch(input,{...init,signal:AbortSignal.any([signal,AbortSignal.timeout(60_000),...(init?.signal?[init.signal]:[])])})},
+    }),supabaseUrl,supabaseSecretKey), {signal:stoppingSignal.signal,logger});
     let nextAuditMaintenance = 0;
     let nextObjectCleanup = 0;
     try {
@@ -221,6 +230,8 @@ async function main() {
             if (processed === 0 && !stopping) await sleep(IDLE_DELAY_MS);
         }
     } finally {
+        stoppingSignal.abort();
+        await scanLoop;
         await pool.end();
         logger.info("Outbox worker stopped.");
     }

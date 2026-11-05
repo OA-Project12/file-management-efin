@@ -110,3 +110,78 @@ test('CSP permits text/image/PDF preview and download grants only for the config
     await context.close();
   }
 });
+
+test('upload picker/drop validates types per file, infers blank MIME and distinguishes rejected versus unavailable completion', async ({ browser }) => {
+  test.setTimeout(60_000);
+  const origin=process.env.NEXT_PUBLIC_SUPABASE_URL??'https://fixture.supabase.co';
+  const userId='77777777-7777-4777-8777-777777777777',dept='88888888-8888-4888-8888-888888888888';
+  for(const width of [1440,390]){
+    const context=await browser.newContext({viewport:{width,height:900}});
+    const session={access_token:`${Buffer.from('{"alg":"HS256"}').toString('base64url')}.${Buffer.from(JSON.stringify({sub:userId,exp:Math.floor(Date.now()/1000)+3600})).toString('base64url')}.fixture`,refresh_token:'fixture',expires_at:Math.floor(Date.now()/1000)+3600,expires_in:3600,token_type:'bearer',user:{id:userId,email:'fixture@example.invalid',aud:'authenticated',app_metadata:{},user_metadata:{},created_at:'2026-01-01T00:00:00Z'}};
+    await context.addInitScript(({key,session})=>localStorage.setItem(key,JSON.stringify(session)),{key:`sb-${new URL(origin).hostname.split('.')[0]}-auth-token`,session});
+    await context.route('**/auth/v1/**',route=>route.fulfill({json:session.user}));
+    let submitted=[],puts=[],completion='success';
+    const polls=new Map();
+    await context.route('**/api/v1/**',route=>{
+      const path=new URL(route.request().url()).pathname,ok=data=>route.fulfill({json:{data}});
+      if(path.endsWith('/me'))return route.fulfill({json:{userId,tenantId:userId,applicationId:dept,isTenantAdmin:false,scopes:['files:read','files:write'],departments:[{id:dept,name:'IT',code:'it',role:'editor'}]}});
+      if(path.endsWith('/departments'))return ok({items:[{id:dept,name:'IT',code:'it',role:'editor'}]});
+      if(path.endsWith('/folders'))return ok({items:[]});
+      if(path.endsWith('/search'))return ok({items:[],nextCursor:null});
+      if(path.endsWith('/upload-intents/batch')){
+        submitted=route.request().postDataJSON().files;
+        return ok({items:submitted.map((file,index)=>({index,status:'ready',fileId:`99999999-9999-4999-8999-${String(index+1).padStart(12,'0')}`,signedUrl:`${origin}/storage/v1/upload/${index}`}))});
+      }
+      if (path.endsWith('/complete') && completion === 'scan') {
+        const scanId = path.split('/').at(-2).replace(/^99999999/, '77777777');
+        return route.fulfill({status:202,json:{data:{scanId,status:'pending_scan',statusUrl:path.replace(/\/complete$/, '/scan-jobs/'+scanId)}}});
+      }
+      if(path.endsWith('/complete'))return completion==='success'?ok({status:'available'}):route.fulfill({status:completion==='invalid'?415:503,json:{error:{code:completion==='invalid'?'file_signature_invalid':'file_validation_unavailable'}}});
+      if (path.includes('/scan-jobs/')) {
+        const scanId=path.split('/').at(-1);
+        const count=(polls.get(scanId)??0)+1;
+        polls.set(scanId,count);
+        const status=scanId.endsWith('2')?'quarantined':scanId.endsWith('3')?'scan_failed':'available';
+        return ok({scanId,status:count === 1 ? 'scanning' : status});
+      }
+      return route.fulfill({status:404,json:{error:{code:'fixture_not_found'}}});
+    });
+    await context.route(`${origin}/storage/**`,route=>{puts.push(route.request().headers()['content-type']);return route.fulfill({json:{Key:'fixture'}});});
+    const page=await context.newPage(),errors=[];page.on('pageerror',e=>errors.push(e.message));
+    await page.goto('/');await page.getByRole('button',{name:'อัปโหลดไฟล์',exact:true}).click();
+    const chooser=page.getByRole('dialog',{name:'เลือกหน่วยงานสำหรับอัปโหลด'});
+    if(await chooser.isVisible()){
+      await chooser.getByRole('combobox').selectOption(dept);
+      await chooser.getByRole('button',{name:'เปิดคลังหน่วยงาน',exact:true}).click();
+      await expect(chooser).not.toBeVisible();
+      await page.getByRole('button',{name:'อัปโหลดไฟล์',exact:true}).click();
+    }
+    const queue=page.locator('.upload-queue');await expect(queue).toBeVisible();
+    await expect(queue.locator('input[type=file]')).toHaveAttribute('accept',/\.pdf.*\.jpeg.*\.png/);
+    // A drop can bypass the chooser's accept filter: reject it before any grant.
+    await queue.evaluate(el=>{const dt=new DataTransfer();dt.items.add(new File(['%PDF-1.7'],'report.PDF',{type:''}));dt.items.add(new File(['bad'],'bad.txt',{type:'text/plain'}));el.dispatchEvent(new DragEvent('drop',{bubbles:true,cancelable:true,dataTransfer:dt}));});
+    await expect(queue.getByText('สำเร็จ', {exact:true})).toBeVisible();await expect(queue.getByText(/รับเฉพาะไฟล์ PDF/)).toBeVisible();
+    expect(submitted).toHaveLength(1);expect(submitted[0].contentType).toBe('application/pdf');expect(puts).toEqual(['application/pdf']);
+    completion='invalid';await queue.locator('input[type=file]').setInputFiles({name:'fake.pdf',mimeType:'application/pdf',buffer:Buffer.from('not pdf')});
+    await expect(queue.getByText(/ไฟล์ไม่ผ่านการตรวจประเภท/)).toBeVisible();await expect(queue.getByText('ไม่สำเร็จ',{exact:true})).toBeVisible();
+    completion='unavailable';await queue.locator('input[type=file]').setInputFiles({name:'retry.pdf',mimeType:'application/pdf',buffer:fixturePdf()});
+    await expect(queue.getByText(/ตรวจประเภทไฟล์ไม่ได้ชั่วคราว/)).toBeVisible();
+    await expect(queue.getByRole('listitem').filter({hasText:'retry.pdf'}).getByText(/ยังยืนยันผลไม่ได้/)).toBeVisible();
+    completion='scan';
+    await queue.locator('input[type=file]').setInputFiles(
+      ['scan.pdf','threat.pdf','blocked.pdf'].map(name=>({name,mimeType:'application/pdf',buffer:fixturePdf()})),
+    );
+    const scanRow=queue.getByRole('listitem').filter({hasText:'scan.pdf'});
+    await expect(scanRow.getByText('รอสแกน',{exact:true})).toBeVisible();
+    await expect(scanRow.getByRole('button',{name:'เปิดเอกสาร'})).toHaveCount(0);
+    await expect(scanRow.getByText('กำลังสแกน',{exact:true})).toBeVisible();
+    await expect(scanRow.getByText('พร้อมใช้',{exact:true})).toBeVisible({timeout:12_000});
+    await expect(scanRow.getByRole('button',{name:'เปิดเอกสาร'})).toBeVisible();
+    await expect(queue.getByRole('listitem').filter({hasText:'threat.pdf'}).getByText(/พบภัย/)).toBeVisible();
+    await expect(queue.getByRole('listitem').filter({hasText:'blocked.pdf'}).getByText(/ตรวจไม่ได้/)).toBeVisible();
+    expect(errors).toEqual([]);
+    expect(await page.evaluate(()=>document.documentElement.scrollWidth<=innerWidth)).toBe(true);
+    if(process.env.SECURITY_SCREENSHOT_DIR){mkdirSync(process.env.SECURITY_SCREENSHOT_DIR,{recursive:true});await page.screenshot({path:path.join(process.env.SECURITY_SCREENSHOT_DIR,`file-validation-${width}.png`)});}
+    await context.close();
+  }
+});

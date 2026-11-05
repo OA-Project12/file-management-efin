@@ -1,3 +1,5 @@
+import type { StoredObjectInfo } from "@/application/files/ports/object-storage";
+import { enqueueScan, MalwareScanError, type ScanJob } from "@/infrastructure/database/malware-scan-jobs";
 import "server-only";
 import { Pool } from "pg";
 import type { FileRecord } from "@/domain/files/file-record";
@@ -244,36 +246,50 @@ export class PostgresFileRepository implements FileRepository {
     }
 
     async findTrashedObject(fileId: string, scope: FileScope): Promise<TrashedObject | null> {
-        const result = await this.pool.query<{ bucket_id: string; object_key: string }>(
-            `select bucket_id, object_key from filesvc.files
+        const result = await this.pool.query<{ bucket_id: string; object_key: string; original_name: string; content_type: string }>(
+            `select bucket_id, object_key, original_name, content_type from filesvc.files
        where id = $1 and tenant_id = $2 and application_id = $3 and ($4::text is null or owner_subject = $4)
          and department_id = any($5::uuid[]) and status = 'deleted' and trashed_at is not null`,
             [fileId, scope.tenantId, scope.applicationId, scope.ownerSubject, scope.departmentIds],
         );
         const row = result.rows[0];
-        return row ? { bucketId: row.bucket_id, objectKey: row.object_key } : null;
+        return row ? { bucketId: row.bucket_id, objectKey: row.object_key, originalName: row.original_name, contentType: row.content_type } : null;
     }
 
-    async restore(fileId: string, scope: FileScope): Promise<"restored" | "not_found"> {
+    async restore(fileId: string, scope: FileScope, checked: TrashedObject, expected: StoredObjectInfo, validationDetails?: Record<string,string|null>): Promise<ScanJob | "not_found"> {
         const client = await this.pool.connect();
         try {
-        await client.query("begin");
-        const result = await client.query(
-            `update filesvc.files set status = 'available', deleted_at = null, trashed_at = null, updated_at = now()
-       where id = $1 and tenant_id = $2 and application_id = $3 and ($4::text is null or owner_subject = $4)
-         and department_id = any($5::uuid[]) and status = 'deleted' and trashed_at is not null
-       returning id`,
-            [fileId, scope.tenantId, scope.applicationId, scope.ownerSubject, scope.departmentIds],
-        );
-        if (result.rowCount && scope.auditActor) await recordAudit(scope.auditActor,
-            { action: "file.restore", outcome: "success", resourceType: "file", resourceId: fileId, details: { beforeStatus: "deleted", afterStatus: "available" } }, client);
-        await client.query("commit");
-        return result.rowCount ? "restored" : "not_found";
-        } catch (error) { await client.query("rollback").catch(() => undefined); throw error; }
-        finally { client.release(); }
+            await client.query("begin");
+            const {rows:[file]} = await client.query<{current_version_id:string|null;trashed_at:string}>(
+                `select current_version_id,trashed_at::text as trashed_at from filesvc.files
+                 where id=$1 and tenant_id=$2 and application_id=$3 and ($4::text is null or owner_subject=$4)
+                 and department_id=any($5::uuid[]) and status='deleted' and trashed_at is not null
+                 and bucket_id=$6 and object_key=$7 and original_name=$8 and content_type=$9 for update`,
+                [fileId,scope.tenantId,scope.applicationId,scope.ownerSubject,scope.departmentIds,
+                 checked.bucketId,checked.objectKey,checked.originalName,checked.contentType]);
+            if (!file || !scope.auditActor) {
+                await client.query("rollback");
+                return "not_found";
+            }
+            const {rows:[existing]} = await client.query<ScanJob & {kind:string}>(
+                `select id,file_id,version_id,status,result_code,kind from filesvc.malware_scan_jobs
+                 where file_id=$1 and kind in ('trash_restore','version_restore') and
+                 (status in ('pending_scan','scanning') or (kind='trash_restore' and status='quarantined' and bucket_id=$2 and object_key=$3))
+                 order by created_at desc limit 1`,[fileId,checked.bucketId,checked.objectKey]);
+            if (existing && existing.kind!=="trash_restore") throw new MalwareScanError("scan_in_progress",409);
+            const job = existing ?? await enqueueScan(client,scope.auditActor,{
+                kind:"trash_restore",fileId,baseVersionId:file.current_version_id,trashAt:file.trashed_at,
+                bucket:checked.bucketId,key:checked.objectKey,expected,audit:validationDetails,
+            });
+            await client.query("commit");
+            return job;
+        } catch (error) {
+            await client.query("rollback").catch(() => undefined);
+            throw error;
+        } finally { client.release(); }
     }
 
-    async requestPurge(fileId: string, scope: FileScope): Promise<"queued" | "not_found"> {
+    async requestPurge(fileId: string, scope: FileScope): Promise<"queued" | "not_found" | "scan_in_progress"> {
         const client = await this.pool.connect();
         try {
             await client.query("begin");
@@ -288,6 +304,14 @@ export class PostgresFileRepository implements FileRepository {
             if (!row) {
                 await client.query("rollback");
                 return "not_found";
+            }
+            const scan = await client.query(
+                `select id from filesvc.malware_scan_jobs where file_id=$1
+                 and (status in ('pending_scan','scanning') or (cleanup_after is not null and cleanup_completed_at is null))
+                 limit 1`,[fileId]);
+            if (scan.rowCount) {
+                await client.query("rollback");
+                return "scan_in_progress";
             }
             await client.query(`update filesvc.files set status = 'deleting', trashed_at = null, updated_at = now() where id = $1`, [
                 fileId,

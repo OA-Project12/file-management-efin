@@ -1,5 +1,6 @@
 export type FileStatus =
   | "pending_upload"
+  | "pending_scan"
   | "available"
   | "quarantined"
   | "deleting"

@@ -13,6 +13,9 @@ export interface DownloadGrant {
 export interface StoredObjectInfo {
   sizeBytes: number;
   contentType: string | null;
+  version?: string;
+  eTag?: string;
+  lastModified?: string;
 }
 
 export interface ObjectStorage {
@@ -24,6 +27,5 @@ export interface ObjectStorage {
     downloadName: string,
   ): Promise<DownloadGrant>;
   getObjectInfo(bucketId: string, objectKey: string): Promise<StoredObjectInfo | null>;
-  deleteObject(bucketId: string, objectKey: string): Promise<void>;
-  copyObject(bucketId: string, sourceKey: string, destinationKey: string): Promise<void>;
+  readObjectPrefix(bucketId: string, objectKey: string, expected?: StoredObjectInfo): Promise<Uint8Array>;
 }

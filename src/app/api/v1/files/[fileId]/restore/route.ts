@@ -1,3 +1,7 @@
+import { MalwareScanError, requireMalwareScan, scanResponse } from "@/infrastructure/database/malware-scan-jobs";
+import { validateStoredFile, validationObjectInfo } from "@/application/files/validate-stored-file";
+import { FileValidationError, validationAudit } from "@/domain/files/file-validation";
+import { recordAudit } from "@/infrastructure/audit/record-audit";
 import { logger } from "@/infrastructure/security/logger.mjs";
 import { auditRoute } from "@/infrastructure/audit/audit-route";
 import { authenticateApplicationKey } from "@/infrastructure/auth/application-key-authenticator";
@@ -40,12 +44,22 @@ async function handlePOST(request: Request, { params }: { params: Promise<{ file
         const repository = new PostgresFileRepository();
         const object = await repository.findTrashedObject(fileId, scope);
         if (!object) return fail("file_not_found", "File was not found in trash.", 404);
-        const info = await new SupabaseObjectStorage().getObjectInfo(object.bucketId, object.objectKey);
+        requireMalwareScan();
+        const storage = new SupabaseObjectStorage();
+        const info = await validationObjectInfo(storage, object.bucketId, object.objectKey);
         if (!info) return fail("object_not_found", "The Storage object is missing and cannot be restored.", 409);
-        const result = await repository.restore(fileId, scope);
+        let detected: string;
+        try { detected = await validateStoredFile(storage, object.bucketId, object.objectKey, object.originalName, object.contentType, info); }
+        catch (error) {
+            if (error instanceof FileValidationError) await recordAudit(app, { action: "file.restore", outcome: "failure", resourceType: "file", resourceId: fileId,
+                details: { reason: error.code, ...validationAudit(object.contentType, error.detectedMime) } });
+            throw error;
+        }
+        const result = await repository.restore(fileId, scope, object, info, validationAudit(object.contentType, detected));
         if (result === "not_found") return fail("file_not_found", "File was not found in trash.", 404);
-        return Response.json({ data: { fileId, status: "available" } }, { headers: { "Cache-Control": "no-store" } });
+        return scanResponse(result,true);
     } catch (error) {
+        if (error instanceof MalwareScanError || error instanceof FileValidationError) return fail(error.code, error.message, error.status);
         logger.error("Could not restore file", { message: error instanceof Error ? error.message : "Unknown error" });
         return fail("service_unavailable", "Could not restore file.", 503);
     }

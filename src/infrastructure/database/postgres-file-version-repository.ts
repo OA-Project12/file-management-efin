@@ -4,7 +4,9 @@ import type { AuthenticatedApplication } from "@/application/auth/authenticated-
 import { departmentIdsForRole } from "@/application/auth/department-authorization";
 import { getDatabasePool } from "./pool";
 import { recordAudit } from "@/infrastructure/audit/record-audit";
-import { reserveStorage, settleStorage, pendingStorageRelease } from "./storage-quota-accounting";
+import type { StoredObjectInfo } from "@/application/files/ports/object-storage";
+import { enqueueScan, findUploadScan, type ScanJob } from "./malware-scan-jobs";
+import { reserveStorage, settleStorage } from "./storage-quota-accounting";
 
 export class VersionError extends Error {
     constructor(
@@ -128,6 +130,8 @@ export class PostgresFileVersionRepository {
             objectKey: string;
             sizeBytes: number;
             contentType: string;
+            expected: StoredObjectInfo;
+            audit: Record<string, string | null>;
         },
     ) {
         return transaction(async (client) => {
@@ -142,12 +146,22 @@ export class PostgresFileVersionRepository {
                 )
             ).rows[0];
             if (!source) throw new VersionError("version_not_found", 404);
-            const result = await client.query<{ version_number: number }>(
+            const existing = await client.query<ScanJob & {kind: string; source_version_id: string; actor_id: string}>(
+                `select id,file_id,version_id,status,result_code,kind,source_version_id,actor_id from filesvc.malware_scan_jobs
+                 where file_id=$1 and kind in ('trash_restore','version_restore') and status in ('pending_scan','scanning')`, [fileId],
+            );
+            const active = existing.rows[0];
+            if (active) {
+                if (active.kind === "version_restore" && active.source_version_id === sourceVersionId &&
+                    active.actor_id === (scope.app.userId ?? scope.app.keyId)) return active;
+                throw new VersionError("scan_in_progress", 409);
+            }
+            await client.query(
                 `insert into filesvc.file_versions
                  (id,file_id,version_number,bucket_id,object_key,original_name,content_type,size_bytes,
-                  checksum_sha256,created_by_kind,created_by_id,restored_from_version_id)
-                 select $1,$2,coalesce(max(version_number),0)+1,$3,$4,$5,$6,$7,$8,$9,$10::uuid,$11
-                 from filesvc.file_versions where file_id=$2 returning version_number`,
+                  checksum_sha256,created_by_kind,created_by_id,restored_from_version_id,status)
+                 select $1,$2,coalesce(max(version_number),0)+1,$3,$4,$5,$6,$7,$8,$9,$10::uuid,$11,'pending_scan'
+                 from filesvc.file_versions where file_id=$2`,
                 [
                     input.versionId,
                     fileId,
@@ -175,127 +189,11 @@ export class PostgresFileVersionRepository {
                 expectedBytes: input.sizeBytes,
                 expiresAt: intent.rows[0].expires_at,
             });
-            await recordAudit(
-                scope.app,
-                {
-                    action: "file.version_restore_requested",
-                    outcome: "success",
-                    resourceType: "file",
-                    resourceId: fileId,
-                    details: { versionId: input.versionId, sourceVersionId },
-                },
-                client,
-            );
-            return { versionNumber: result.rows[0].version_number, bucketId: source.bucket_id };
-        });
-    }
-
-    async completeRestore(fileId: string, versionId: string, scope: VersionScope) {
-        return transaction(async (client) => {
-            const file = await lockFile(client, fileId, scope, true);
-            const v = (
-                await client.query<
-                    AvailableVersion & {
-                        status: string;
-                        expires_at: Date;
-                        base_version_id: string;
-                        restored_from_version_id: string;
-                    }
-                >(
-                    `select v.*,i.expires_at,i.base_version_id from filesvc.file_versions v
-                 join filesvc.version_restore_intents i on i.version_id=v.id
-                 where v.id=$1 and v.file_id=$2 for update of v,i`,
-                    [versionId, fileId],
-                )
-            ).rows[0];
-            if (!v) throw new VersionError("version_not_found", 404);
-            if (v.status === "available") return null;
-            if (v.status !== "pending_upload") throw new VersionError("restore_not_pending", 409);
-            if (v.expires_at.getTime() <= Date.now()) throw new VersionError("restore_expired", 410);
-            if (file.current_version_id !== v.base_version_id) throw new VersionError("version_conflict", 409);
-            const rejected = await settleStorage(
-                client,
-                scope.app,
-                {
-                    fileId,
-                    versionId,
-                    kind: "version_restore",
-                    bucketId: v.bucket_id,
-                    objectKey: v.object_key,
-                    expectedBytes: Number(v.size_bytes),
-                    expiresAt: v.expires_at,
-                },
-                Number(v.size_bytes),
-            );
-            if (rejected) {
-                await client.query(`update filesvc.file_versions set status='quarantined' where id=$1`, [versionId]);
-                await recordAudit(
-                    scope.app,
-                    {
-                        action: "file.version_restore",
-                        outcome: "failure",
-                        resourceType: "file",
-                        resourceId: fileId,
-                        details: { versionId, reason: rejected },
-                    },
-                    client,
-                );
-                return rejected;
-            }
-            await client.query(`update filesvc.file_versions set status='available',completed_at=now() where id=$1`, [versionId]);
-            await client.query(`update filesvc.version_restore_intents set completed_at=now() where version_id=$1`, [versionId]);
-            await client.query(
-                `update filesvc.files set current_version_id=$2,bucket_id=$3,object_key=$4,
-                   original_name=$5,content_type=$6,size_bytes=$7,checksum_sha256=$8,updated_at=now() where id=$1`,
-                [fileId, versionId, v.bucket_id, v.object_key, v.original_name, v.content_type, v.size_bytes, v.checksum_sha256],
-            );
-            await recordAudit(
-                scope.app,
-                {
-                    action: "file.version_restore",
-                    outcome: "success",
-                    resourceType: "file",
-                    resourceId: fileId,
-                    details: { versionId, sourceVersionId: v.restored_from_version_id, versionNumber: v.version_number },
-                },
-                client,
-            );
-            return null;
-        });
-    }
-
-    // Only return true when a copy is proven not to be the committed current version.
-    async failRestore(fileId: string, versionId: string, scope: VersionScope, reason: string): Promise<boolean> {
-        return transaction(async (client) => {
-            const file = (
-                await client.query<FileHead>(
-                    `select id,current_version_id from filesvc.files
-                 where id=$1 and tenant_id=$2 and application_id=$3 for update`,
-                    [fileId, scope.app.tenantId, scope.app.applicationId],
-                )
-            ).rows[0];
-            if (!file || file.current_version_id === versionId) return false;
-            const changed = await client.query(
-                `update filesvc.file_versions v set status='failed' where v.id=$1 and v.file_id=$2
-                 and v.status='pending_upload' and exists (
-                   select 1 from filesvc.version_restore_intents i where i.version_id=v.id and i.completed_at is null
-                 ) returning v.id`,
-                [versionId, fileId],
-            );
-            if (!changed.rowCount) return false;
-            await pendingStorageRelease(client, scope.app, fileId, versionId);
-            await recordAudit(
-                scope.app,
-                {
-                    action: "file.version_restore",
-                    outcome: "failure",
-                    resourceType: "file",
-                    resourceId: fileId,
-                    details: { versionId, reason },
-                },
-                client,
-            );
-            return true;
+            return enqueueScan(client, scope.app, {
+                kind: "version_restore", fileId, versionId: input.versionId, sourceVersionId,
+                baseVersionId: file.current_version_id, bucket: source.bucket_id, key: source.object_key,
+                expected: input.expected, audit: input.audit,
+            });
         });
     }
 
@@ -379,7 +277,7 @@ export class PostgresFileVersionRepository {
         });
     }
 
-    async complete(fileId: string, versionId: string, scope: VersionScope, size: number, contentType: string, oversized: boolean) {
+    async complete(fileId: string, versionId: string, scope: VersionScope, size: number, contentType: string, oversized: boolean, expected: StoredObjectInfo, validationDetails: Record<string, string | null>, validationRejection?: string) {
         return transaction(async (client) => {
             const file = await lockFile(client, fileId, scope, true);
             const result = await client.query<PendingVersion>(
@@ -390,6 +288,8 @@ export class PostgresFileVersionRepository {
             );
             const v = result.rows[0];
             if (!v) throw new VersionError("version_not_found", 404);
+            const queued = await findUploadScan(scope.app, fileId, "version_upload", versionId, client);
+            if (queued) return queued;
             if (v.completed_at && v.status === "available") return null;
             if (v.status !== "pending_upload") throw new VersionError("upload_not_pending", 409);
             if (v.expires_at.getTime() <= Date.now()) throw new VersionError("upload_intent_expired", 410);
@@ -407,31 +307,25 @@ export class PostgresFileVersionRepository {
                     expiresAt: v.expires_at,
                 },
                 size,
-                oversized,
+                oversized || !!validationRejection,
             );
-            const rejected = oversized ? "file_too_large" : quotaRejection;
+            const rejected = oversized ? "file_too_large" : validationRejection ?? quotaRejection;
             await client.query(
-                `update filesvc.file_versions set status=$2,size_bytes=$3,content_type=$4,
-                   completed_at=case when $2='available' then now() else null end where id=$1`,
-                [versionId, rejected ? "quarantined" : "available", size, contentType],
+                `update filesvc.file_versions set status=$2,size_bytes=$3,content_type=$4 where id=$1`,
+                [versionId, rejected ? "quarantined" : "pending_scan", size, contentType],
             );
-            if (!rejected) {
-                await client.query(`update filesvc.version_upload_intents set completed_at=now() where version_id=$1`, [versionId]);
-                // Maintain legacy columns for the existing search, trash and outbox paths.
-                await client.query(
-                    `update filesvc.files set current_version_id=$2,bucket_id=$3,object_key=$4,
-                       original_name=$5,content_type=$6,size_bytes=$7,checksum_sha256=$8,updated_at=now() where id=$1`,
-                    [fileId, versionId, v.bucket_id, v.object_key, v.original_name, contentType, size, v.checksum_sha256],
-                );
-            }
+            if (!rejected) return enqueueScan(client, scope.app, {
+                kind: "version_upload", fileId, versionId, baseVersionId: v.base_version_id,
+                bucket: v.bucket_id, key: v.object_key, expected, audit: validationDetails,
+            });
             await recordAudit(
                 scope.app,
                 {
-                    action: rejected ? "file.version_quarantined" : "file.version_upload_complete",
-                    outcome: rejected ? "failure" : "success",
+                    action: "file.version_quarantined",
+                    outcome: "failure",
                     resourceType: "file",
                     resourceId: fileId,
-                    details: { versionId, versionNumber: v.version_number, sizeBytes: size, contentType },
+                    details: { versionId, versionNumber: v.version_number, sizeBytes: size, contentType, reason: rejected, ...validationDetails },
                 },
                 client,
             );

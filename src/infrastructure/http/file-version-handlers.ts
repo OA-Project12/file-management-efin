@@ -1,5 +1,9 @@
+import { MalwareScanError, findUploadScan, requireMalwareScan, scanResponse } from "@/infrastructure/database/malware-scan-jobs";
 import { logger } from "@/infrastructure/security/logger.mjs";
 import "server-only";
+import { validateStoredFile, validationObjectInfo } from "@/application/files/validate-stored-file";
+import { FileValidationError, validateDeclaredType, validationAudit } from "@/domain/files/file-validation";
+
 import { randomUUID } from "node:crypto";
 import { connection } from "next/server";
 import { authenticateApplicationKey } from "@/infrastructure/auth/application-key-authenticator";
@@ -43,8 +47,8 @@ async function body(request: Request): Promise<Record<string, unknown>> {
     }
 }
 
-async function scope(request: Request, owner: unknown, write: boolean, refresh = false): Promise<VersionScope> {
-    const app = await authenticateApplicationKey(request, refresh);
+async function scope(request: Request, owner: unknown, write: boolean): Promise<VersionScope> {
+    const app = await authenticateApplicationKey(request);
     if (!app) throw new VersionError("unauthorized", 401);
     if (!app.scopes.includes(write ? "files:write" : "files:read")) throw new VersionError("forbidden", 403);
     const ownerSubject = app.userId ? null : typeof owner === "string" ? owner.trim() : "";
@@ -55,7 +59,7 @@ async function scope(request: Request, owner: unknown, write: boolean, refresh =
 function failure(error: unknown) {
     const quota = storageQuotaErrorResponse(error);
     if (quota) return quota;
-    const known = error instanceof VersionError;
+    const known = error instanceof VersionError || error instanceof FileValidationError || error instanceof MalwareScanError;
     if (!known) logger.error("File version operation failed", { message: error instanceof Error ? error.message : "Unknown error" });
     const code = known ? error.code : "service_unavailable";
     const message =
@@ -110,6 +114,8 @@ export async function createVersionUpload(request: Request, context: Context) {
         const checksum = input.checksumSha256;
         if (checksum != null && (typeof checksum !== "string" || !/^[a-f0-9]{64}$/i.test(checksum)))
             throw new VersionError("invalid_checksum", 400);
+        requireMalwareScan();
+        validateDeclaredType(name, contentType);
         const versionId = randomUUID();
         const objectKey = `${auth.app.tenantId}/${auth.app.applicationId}/${fileId}/versions/${versionId}`;
         const grant = await storage.createUploadGrant(objectKey);
@@ -139,19 +145,31 @@ export async function completeVersionUpload(request: Request, context: Context) 
         const input = await body(request);
         const auth = await scope(request, input.ownerSubject, true);
         const v = await repository.find(fileId, versionId, auth);
+        const queued = await findUploadScan(auth.app, fileId, "version_upload", versionId);
+        if (queued) return scanResponse(queued, true);
         if (v.completed_at && v.status === "available") return json({ fileId, versionId, status: "available" });
+        requireMalwareScan();
         if (v.status !== "pending_upload") throw new VersionError("upload_not_pending", 409);
         if (v.expires_at.getTime() <= Date.now()) throw new VersionError("upload_intent_expired", 410);
-        const info = await storage.getObjectInfo(v.bucket_id, v.object_key);
+        const info = await validationObjectInfo(storage, v.bucket_id, v.object_key);
         if (!info) throw new VersionError("object_not_found", 409);
         const oversized = info.sizeBytes > maxSize();
-        const rejected = await repository.complete(fileId, versionId, auth, info.sizeBytes, info.contentType ?? v.content_type, oversized);
-        if (rejected) {
-            await storage.deleteObject(v.bucket_id, v.object_key).catch(() => undefined);
-            if (rejected === "file_too_large") throw new VersionError(rejected, 413);
-            throw new StorageQuotaError(rejected);
+        let detected = info.contentType ?? v.content_type;
+        let validationError: FileValidationError | undefined;
+        if (!oversized) {
+            try { detected = await validateStoredFile(storage, v.bucket_id, v.object_key, v.original_name, v.content_type, info); }
+            catch (error) {
+                if (!(error instanceof FileValidationError) || error.status !== 415) throw error;
+                validationError = error;
+            }
         }
-        return json({ fileId, versionId, status: "available", sizeBytes: info.sizeBytes, contentType: info.contentType ?? v.content_type });
+        const result = await repository.complete(fileId, versionId, auth, info.sizeBytes, detected, oversized, info,
+            validationAudit(v.content_type, validationError ? validationError.detectedMime : detected), validationError?.code);
+        if (result && typeof result !== "string") return scanResponse(result, true);
+        if (validationError && result === validationError.code) throw validationError;
+        if (result === "file_too_large") throw new VersionError(result, 413);
+        if (result) throw new StorageQuotaError(result);
+        return json({ fileId, versionId, status: "available" });
     } catch (error) {
         return failure(error);
     }
@@ -210,65 +228,35 @@ export const previewVersion = (request: Request, context: Context) => versionUrl
 export const downloadVersion = (request: Request, context: Context) => versionUrl(request, context, false);
 
 export async function restoreVersion(request: Request, context: Context) {
-    let pending: { fileId: string; versionId: string; auth: VersionScope; bucketId: string; objectKey: string } | undefined;
+    let validationContext: { app: VersionScope["app"]; fileId: string; sourceVersionId: string; declaredMime: string } | undefined;
     try {
         const { fileId, versionId: sourceVersionId } = await versionIds(context);
         const input = await body(request);
         const auth = await scope(request, input.ownerSubject, true);
         if (typeof input.expectedCurrentVersionId !== "string" || !UUID.test(input.expectedCurrentVersionId))
             throw new VersionError("invalid_current_version_id", 400);
+        requireMalwareScan();
         const source = await repository.findAvailable(fileId, sourceVersionId, auth, true);
-        const info = await storage.getObjectInfo(source.bucket_id, source.object_key);
+        validationContext = { app: auth.app, fileId, sourceVersionId, declaredMime: source.content_type };
+        const info = await validationObjectInfo(storage, source.bucket_id, source.object_key);
         if (!info) throw new VersionError("object_not_found", 409);
         if (info.sizeBytes !== Number(source.size_bytes)) throw new VersionError("object_changed", 409);
         if (info.sizeBytes > maxSize()) throw new VersionError("file_too_large", 413);
+        const validatedSource = await validateStoredFile(storage, source.bucket_id, source.object_key, source.original_name, source.content_type, info);
         const versionId = randomUUID();
         const objectKey = `${auth.app.tenantId}/${auth.app.applicationId}/${fileId}/versions/${versionId}`;
-        const contentType = info.contentType ?? source.content_type;
-        const reserved = await repository.reserveRestore(fileId, sourceVersionId, auth, {
-            versionId,
-            expectedCurrentVersionId: input.expectedCurrentVersionId,
-            objectKey,
-            sizeBytes: info.sizeBytes,
-            contentType,
+        const job = await repository.reserveRestore(fileId, sourceVersionId, auth, {
+            versionId, objectKey, expectedCurrentVersionId: input.expectedCurrentVersionId,
+            sizeBytes: info.sizeBytes, contentType: validatedSource, expected: info,
+            audit: validationAudit(source.content_type, validatedSource),
         });
-        pending = { fileId, versionId, auth, bucketId: reserved.bucketId, objectKey };
-        await storage.copyObject(reserved.bucketId, source.object_key, objectKey);
-        const copied = await storage.getObjectInfo(reserved.bucketId, objectKey);
-        if (!copied || copied.sizeBytes !== info.sizeBytes || (copied.contentType ?? contentType) !== contentType)
-            throw new VersionError("object_changed", 409);
-        // A restore can spend time copying; refresh membership/key validity before publishing it.
-        const latestAuth = await scope(request, input.ownerSubject, true, true);
-        const rejected = await repository.completeRestore(fileId, versionId, latestAuth);
-        if (rejected) throw new StorageQuotaError(rejected);
-        return json(
-            {
-                fileId,
-                versionId,
-                currentVersionId: versionId,
-                restoredFromVersionId: sourceVersionId,
-                versionNumber: reserved.versionNumber,
-                status: "available",
-                sizeBytes: copied.sizeBytes,
-                contentType,
-            },
-            201,
-        );
+        return scanResponse(job, true);
     } catch (error) {
-        if (pending) {
-            const { fileId, versionId, auth, bucketId, objectKey } = pending;
-            try {
-                const safeToRemove = await repository.failRestore(
-                    fileId,
-                    versionId,
-                    auth,
-                    error instanceof VersionError ? error.code : "storage_or_database_failure",
-                );
-                if (safeToRemove) await storage.deleteObject(bucketId, objectKey);
-            } catch {
-                // Keep the tracked pending/failed row for cleanup; never risk removing a committed current object.
-                logger.error("Restore copy needs cleanup", { fileId, versionId });
-            }
+        if (error instanceof FileValidationError && validationContext) {
+            try { await recordAudit(validationContext.app, { action: "file.version_restore", outcome: "failure", resourceType: "file",
+                resourceId: validationContext.fileId, details: { sourceVersionId: validationContext.sourceVersionId, reason: error.code,
+                    ...validationAudit(validationContext.declaredMime, error.detectedMime) } }); }
+            catch { return failure(new VersionError("audit_unavailable", 503)); }
         }
         return failure(error);
     }

@@ -1,5 +1,6 @@
 import { boundedFetch } from "@/infrastructure/security/supabase-fetch.mjs";
 import "server-only";
+import { readObjectPrefix } from "./read-object-prefix";
 import { createClient, type SupabaseClient } from "@supabase/supabase-js";
 import type { DownloadGrant, ObjectStorage, StoredObjectInfo, UploadGrant } from "@/application/files/ports/object-storage";
 
@@ -28,22 +29,9 @@ function getBucketName(): string {
 }
 
 export class SupabaseObjectStorage implements ObjectStorage {
-    async copyObject(bucketId: string, sourceKey: string, destinationKey: string): Promise<void> {
-        const url = process.env.SUPABASE_URL;
-        const secret = process.env.SUPABASE_SECRET_KEY;
-        if (!url || !secret) throw new Error("Supabase Storage is not configured.");
-        // Bound the copy request well below the ten-minute restore lease used by purge.
-        const deadline = AbortSignal.timeout(60_000);
-        const copyClient = createClient(url,secret,{
-            auth:{persistSession:false,autoRefreshToken:false},
-            global:{fetch:(input,init) => fetch(input,{
-                ...init,signal:AbortSignal.any([deadline,...(init?.signal ? [init.signal] : [])]),
-            })},
-        });
-        const { error } = await copyClient.storage.from(bucketId).copy(sourceKey,destinationKey);
-        if (error) throw new Error(`Could not copy file version: ${error.message}`);
+    readObjectPrefix(bucketId: string, objectKey: string, expected?: StoredObjectInfo) {
+        return readObjectPrefix(bucketId, objectKey, 15_000, expected?.eTag);
     }
-
     async createPreviewGrant(bucketId: string, objectKey: string, expiresInSeconds: number) {
         const { data, error } = await getStorageClient().storage.from(bucketId).createSignedUrl(objectKey, expiresInSeconds);
 
@@ -83,12 +71,9 @@ export class SupabaseObjectStorage implements ObjectStorage {
         return {
             sizeBytes: data.size,
             contentType: data.contentType ?? null,
+            eTag: data.etag,
+            lastModified: data.lastModified ?? data.updatedAt,
+            version: data.version,
         };
-    }
-
-    async deleteObject(bucketId: string, objectKey: string): Promise<void> {
-        const { error } = await getStorageClient().storage.from(bucketId).remove([objectKey]);
-
-        if (error) throw new Error(`Could not delete object: ${error.message}`);
     }
 }

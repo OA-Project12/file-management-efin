@@ -1,3 +1,5 @@
+import { MalwareScanError, requireMalwareScan, uploadFolder } from "@/infrastructure/database/malware-scan-jobs";
+import { FileValidationError, validateDeclaredType } from "@/domain/files/file-validation";
 import { logger } from "@/infrastructure/security/logger.mjs";
 import { auditRoute } from "@/infrastructure/audit/audit-route";
 import { RequestFileUpload } from "@/application/files/request-file-upload";
@@ -74,6 +76,11 @@ function validateFile(
     if (checksum !== undefined && checksum !== null && (typeof checksum !== "string" || !/^[a-f0-9]{64}$/i.test(checksum))) {
         return { error: { code: "invalid_checksum", message: "checksumSha256 must be a 64-character SHA-256 hex value." } };
     }
+    try { validateDeclaredType(originalName, contentType); }
+    catch (error) {
+        if (error instanceof FileValidationError) return { error: { code: error.code, message: error.message } };
+        throw error;
+    }
     return {
         file: {
             originalName,
@@ -90,6 +97,7 @@ async function handlePOST(request: Request): Promise<Response> {
         if (!application) return errorResponse("unauthorized", "A valid API key is required.", 401);
         if (!application.scopes.includes("files:write")) return errorResponse("forbidden", "files:write scope is required.", 403);
 
+        requireMalwareScan();
         let body: unknown;
         try {
             body = await readBody(request);
@@ -99,7 +107,7 @@ async function handlePOST(request: Request): Promise<Response> {
         }
         if (!body || typeof body !== "object" || Array.isArray(body))
             return errorResponse("invalid_json", "Request body must be a JSON object.", 400);
-        const input = body as { ownerSubject?: unknown; departmentId?: unknown; files?: unknown };
+        const input = body as { ownerSubject?: unknown; departmentId?: unknown; folderId?: unknown; files?: unknown };
         const ownerSubject = application.userId ?? (typeof input.ownerSubject === "string" ? input.ownerSubject.trim() : "");
         if (!ownerSubject || ownerSubject.length > 255)
             return errorResponse("invalid_owner_subject", "ownerSubject must contain 1 to 255 characters.", 400);
@@ -116,6 +124,7 @@ async function handlePOST(request: Request): Promise<Response> {
 
         const configured = Number(process.env.MAX_UPLOAD_SIZE_BYTES ?? DEFAULT_MAX_UPLOAD_SIZE_BYTES);
         const maxSize = Number.isSafeInteger(configured) && configured > 0 ? configured : DEFAULT_MAX_UPLOAD_SIZE_BYTES;
+        const folderId = await uploadFolder(application,departmentId,input.folderId);
         const useCase = new RequestFileUpload(new PostgresUploadIntentRepository(), new SupabaseObjectStorage());
         const items = [];
         for (const [index, value] of input.files.entries()) {
@@ -130,6 +139,7 @@ async function handlePOST(request: Request): Promise<Response> {
                     tenantId: application.tenantId,
                     applicationId: application.applicationId,
                     departmentId,
+                    folderId,
                     ownerSubject,
                     ...result.file,
                 });
@@ -153,6 +163,7 @@ async function handlePOST(request: Request): Promise<Response> {
             { status: 200, headers: { "Cache-Control": "no-store" } },
         );
     } catch (error) {
+        if (error instanceof MalwareScanError) return errorResponse(error.code,error.message,error.status);
         logger.error("Could not create batch upload intents", { message: error instanceof Error ? error.message : "Unknown error" });
         return errorResponse("service_unavailable", "Could not create batch upload intents.", 503);
     }

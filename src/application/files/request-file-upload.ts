@@ -1,4 +1,5 @@
 import "server-only";
+import { validateDeclaredType } from "@/domain/files/file-validation";
 import { createHash, randomUUID } from "node:crypto";
 import type { ObjectStorage } from "@/application/files/ports/object-storage";
 import type { UploadIntentRepository } from "@/application/files/ports/upload-intent-repository";
@@ -11,6 +12,7 @@ export interface RequestFileUploadInput {
     tenantId: string;
     applicationId: string;
     departmentId: string;
+    folderId?: string | null;
     ownerSubject: string;
     originalName: string;
     contentType: string;
@@ -25,6 +27,7 @@ export class RequestFileUpload {
     ) {}
 
     async execute(input: RequestFileUploadInput) {
+        input = { ...input, contentType: validateDeclaredType(input.originalName, input.contentType) };
         const fileId = randomUUID();
         const objectKey = `${input.tenantId}/${input.applicationId}/${fileId}`;
         const grant = await this.storage.createUploadGrant(objectKey);

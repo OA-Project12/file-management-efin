@@ -36,6 +36,7 @@ async function handlePOST(request: Request, { params }: { params: Promise<{ file
             ownerSubject,
             departmentIds: departmentIdsForRole(app, "admin"),
         });
+        if (result === "scan_in_progress") return fail("scan_in_progress", "Wait for the scan and cleanup to finish.", 409);
         if (result === "not_found") return fail("file_not_found", "File was not found in trash or Admin access is required.", 404);
         return Response.json(
             { data: { fileId, status: "deleting", purgeRequested: true } },

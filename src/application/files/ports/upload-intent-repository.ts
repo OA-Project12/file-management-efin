@@ -4,6 +4,7 @@ export interface CreatePendingUploadInput {
     tenantId: string;
     applicationId: string;
     departmentId: string;
+    folderId?: string | null;
     ownerSubject: string;
     bucketId: string;
     objectKey: string;
@@ -22,6 +23,7 @@ export interface PendingUpload {
 
 export interface UploadRecord {
     fileId: string;
+    originalName: string;
     bucketId: string;
     objectKey: string;
     sizeBytes: number;
@@ -43,7 +45,9 @@ export interface UploadIntentRepository {
         departmentIds: string[],
         actualSizeBytes: number,
         actualContentType: string,
-    ): Promise<boolean | import("@/domain/storage/department-quota").UploadQuotaRejection>;
+        validationDetails: Record<string, string | null>,
+        expected: import("./object-storage").StoredObjectInfo,
+    ): Promise<false | import("@/infrastructure/database/malware-scan-jobs").ScanJob | import("@/domain/storage/department-quota").UploadQuotaRejection>;
     quarantineUpload(
         auditActor: import("@/application/auth/authenticated-application").AuthenticatedApplication,
         fileId: string,
@@ -51,5 +55,7 @@ export interface UploadIntentRepository {
         applicationId: string,
         actualSizeBytes?: number,
         actualContentType?: string,
+        reason?: string,
+        validationDetails?: Record<string, string | null>,
     ): Promise<void>;
 }

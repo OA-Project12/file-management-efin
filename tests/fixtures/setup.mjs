@@ -6,6 +6,10 @@ if (!['127.0.0.1', 'localhost', 'postgres'].includes(url.hostname) || url.pathna
   throw new Error('Use a disposable local database named efin_security');
 }
 const pool = new pg.Pool({ connectionString: url.toString(), max: 1 });
-try { await pool.query(await readFile(new URL('./schema.sql', import.meta.url), 'utf8')); }
+try {
+  await pool.query(await readFile(new URL('./schema.sql', import.meta.url), 'utf8'));
+  await pool.query(await readFile(new URL('./scan-roles.sql', import.meta.url), 'utf8'));
+  await pool.query(await readFile(new URL('../../db/migrations/20261105_malware_scan.sql', import.meta.url), 'utf8'));
+}
 finally { await pool.end(); }
 console.log('Synthetic security fixtures initialized.');

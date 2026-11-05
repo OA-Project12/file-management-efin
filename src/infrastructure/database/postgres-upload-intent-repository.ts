@@ -1,3 +1,5 @@
+import type { StoredObjectInfo } from "@/application/files/ports/object-storage";
+import { enqueueScan, type ScanJob } from "@/infrastructure/database/malware-scan-jobs";
 import "server-only";
 import type { Pool } from "pg";
 import type {
@@ -19,6 +21,7 @@ interface UploadIntentRow {
 
 interface UploadRecordRow {
     file_id: string;
+    original_name: string;
     bucket_id: string;
     object_key: string;
     size_bytes: string;
@@ -41,8 +44,8 @@ export class PostgresUploadIntentRepository implements UploadIntentRepository {
                 `
           insert into filesvc.files (
             id, tenant_id, application_id, department_id, owner_subject, bucket_id, object_key,
-            original_name, display_name, content_type, size_bytes, checksum_sha256
-          ) values ($1, $2, $3, $4, $5, $6, $7, $8, $8, $9, $10, $11)
+            original_name, display_name, content_type, size_bytes, checksum_sha256, folder_id
+          ) values ($1, $2, $3, $4, $5, $6, $7, $8, $8, $9, $10, $11, $12)
         `,
                 [
                     input.fileId,
@@ -56,6 +59,7 @@ export class PostgresUploadIntentRepository implements UploadIntentRepository {
                     input.contentType,
                     input.sizeBytes,
                     input.checksumSha256,
+                    input.folderId ?? null,
                 ],
             );
 
@@ -97,7 +101,7 @@ export class PostgresUploadIntentRepository implements UploadIntentRepository {
     async findUpload(fileId: string, tenantId: string, applicationId: string): Promise<UploadRecord | null> {
         const result = await this.pool.query<UploadRecordRow>(
             `
-        select f.id as file_id, f.bucket_id, f.object_key, f.size_bytes,
+        select f.id as file_id, f.original_name, f.bucket_id, f.object_key, f.size_bytes,
                f.content_type, f.department_id, f.status, ui.expires_at, ui.completed_at
         from filesvc.files f
         join filesvc.upload_intents ui on ui.file_id = f.id
@@ -111,6 +115,7 @@ export class PostgresUploadIntentRepository implements UploadIntentRepository {
         if (!row) return null;
         return {
             fileId: row.file_id,
+            originalName: row.original_name,
             bucketId: row.bucket_id,
             objectKey: row.object_key,
             sizeBytes: Number(row.size_bytes),
@@ -130,7 +135,9 @@ export class PostgresUploadIntentRepository implements UploadIntentRepository {
         departmentIds: string[],
         actualSizeBytes: number,
         actualContentType: string,
-    ): Promise<boolean | UploadQuotaRejection> {
+        validationDetails: Record<string, string | null>,
+        expected: StoredObjectInfo,
+    ): Promise<false | ScanJob | UploadQuotaRejection> {
         const client = await this.pool.connect();
         try {
             await client.query("begin");
@@ -139,85 +146,44 @@ export class PostgresUploadIntentRepository implements UploadIntentRepository {
                 `select id from filesvc.files where id=$1 and tenant_id=$2 and application_id=$3 for update`,
                 [fileId,tenantId,applicationId],
             );
-            const intent = await client.query(
-                `
-          update filesvc.upload_intents ui
-          set completed_at = now()
-          from filesvc.files f
-          where ui.file_id = f.id
-            and ui.file_id = $1
-            and f.tenant_id = $2
-            and f.application_id = $3
-            and f.department_id = any($4::uuid[])
-            and ui.completed_at is null
-            and ui.expires_at > now()
-            and f.status = 'pending_upload'
-          returning ui.file_id
-        `,
+            const previous = await client.query<ScanJob>(
+                "select id,file_id,version_id,status,result_code from filesvc.malware_scan_jobs where file_id=$1 and tenant_id=$2 and application_id=$3 and kind='initial_upload'",
+                [fileId,tenantId,applicationId]);
+            if (previous.rows[0]) {
+                await client.query("commit");
+                return previous.rows[0];
+            }
+            const { rows: [source] } = await client.query<{
+                bucket_id: string; object_key: string; size_bytes: string; expires_at: Date;
+            }>(
+                `select f.bucket_id,f.object_key,f.size_bytes,ui.expires_at
+                 from filesvc.upload_intents ui join filesvc.files f on f.id=ui.file_id
+                 where f.id=$1 and f.tenant_id=$2 and f.application_id=$3 and f.department_id=any($4::uuid[])
+                   and ui.completed_at is null and ui.expires_at>now() and f.status='pending_upload'
+                 for update of ui`,
                 [fileId, tenantId, applicationId, departmentIds],
             );
-
-            if (intent.rowCount !== 1) {
+            if (!source) {
                 await client.query("rollback");
                 return false;
             }
 
-            const source=(await client.query<{bucket_id:string;object_key:string;size_bytes:string;expires_at:Date}>(
-                `select f.bucket_id,f.object_key,f.size_bytes,ui.expires_at from filesvc.files f
-                 join filesvc.upload_intents ui on ui.file_id=f.id where f.id=$1`,[fileId],
-            )).rows[0];
             const rejected=await settleStorage(client,auditActor,{fileId,bucketId:source.bucket_id,objectKey:source.object_key,
                 kind:"initial_upload",expectedBytes:Number(source.size_bytes),expiresAt:source.expires_at},actualSizeBytes);
             if(rejected) {
                 await client.query(`update filesvc.files set status='quarantined',size_bytes=$2,content_type=$3,updated_at=now() where id=$1`,[fileId,actualSizeBytes,actualContentType]);
-                await client.query(`update filesvc.upload_intents set completed_at=null where file_id=$1`,[fileId]);
                 await recordAudit(auditActor,{action:"file.quarantined",outcome:"failure",resourceType:"file",resourceId:fileId,details:{reason:rejected}},client);
                 await client.query("commit");
                 return rejected;
             }
 
             await client.query(
-                `
-          update filesvc.files
-          set status = 'available', size_bytes = $4, content_type = $5, updated_at = now()
-          where id = $1 and tenant_id = $2 and application_id = $3
-            and status = 'pending_upload'
-        `,
-                [fileId, tenantId, applicationId, actualSizeBytes, actualContentType],
-            );
-            await client.query(
-                `insert into filesvc.file_versions
-                 (file_id, version_number, bucket_id, object_key, original_name, content_type,
-                  size_bytes, checksum_sha256, status, created_by_kind, created_by_id, completed_at)
-                 select id, 1, bucket_id, object_key, original_name, content_type, size_bytes,
-                        checksum_sha256, 'available', $4, $5::uuid, now()
-                 from filesvc.files where id = $1 and tenant_id = $2 and application_id = $3
-                 on conflict (file_id, version_number) do nothing`,
-                [fileId, tenantId, applicationId, auditActor.userId ? "user" : "api_key", auditActor.userId ?? auditActor.keyId],
-            );
-            await client.query(
-                `update filesvc.files f set current_version_id = v.id
-                 from filesvc.file_versions v
-                 where f.id = $1 and f.tenant_id = $2 and f.application_id = $3
-                   and v.file_id = f.id and v.version_number = 1 and f.current_version_id is null`,
-                [fileId, tenantId, applicationId],
-            );
-            await client.query(`update filesvc.storage_allocations a set version_id=f.current_version_id,updated_at=now()
-              from filesvc.files f where f.id=$1 and a.file_id=f.id and a.bucket_id=f.bucket_id and a.object_key=f.object_key
-                and a.tenant_id=$2 and a.application_id=$3`,[fileId,tenantId,applicationId]);
-            await recordAudit(
-                auditActor,
-                {
-                    action: "file.upload_complete",
-                    outcome: "success",
-                    resourceType: "file",
-                    resourceId: fileId,
-                    details: { sizeBytes: actualSizeBytes, contentType: actualContentType },
-                },
-                client,
-            );
+                "update filesvc.files set status='pending_scan',size_bytes=$2,content_type=$3,updated_at=now() where id=$1",
+                [fileId,actualSizeBytes,actualContentType]);
+            const job = await enqueueScan(client,auditActor,{kind:"initial_upload",fileId,bucket:source.bucket_id,
+                key:source.object_key,expected,audit:validationDetails});
             await client.query("commit");
-            return true;
+            return job;
         } catch (error) {
             await client.query("rollback").catch(() => undefined);
             throw error;
@@ -226,7 +192,7 @@ export class PostgresUploadIntentRepository implements UploadIntentRepository {
         }
     }
 
-    async quarantineUpload(auditActor: AuthenticatedApplication, fileId: string, tenantId: string, applicationId: string, actualSizeBytes?:number, actualContentType?:string): Promise<void> {
+    async quarantineUpload(auditActor: AuthenticatedApplication, fileId: string, tenantId: string, applicationId: string, actualSizeBytes?:number, actualContentType?:string, reason = "file_too_large", validationDetails: Record<string, string | null> = {}): Promise<void> {
         const client = await this.pool.connect();
         try {
             await client.query("begin");
@@ -254,7 +220,7 @@ export class PostgresUploadIntentRepository implements UploadIntentRepository {
                         outcome: "failure",
                         resourceType: "file",
                         resourceId: fileId,
-                        details: { reason: "file_too_large" },
+                        details: { reason, ...validationDetails },
                     },
                     client,
                 );

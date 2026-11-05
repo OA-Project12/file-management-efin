@@ -1,3 +1,6 @@
+import { MalwareScanError, requireMalwareScan, scanResponse, findUploadScan } from "@/infrastructure/database/malware-scan-jobs";
+import { validateStoredFile, validationObjectInfo } from "@/application/files/validate-stored-file";
+import { FileValidationError, validationAudit } from "@/domain/files/file-validation";
 import { logger } from "@/infrastructure/security/logger.mjs";
 import { auditRoute } from "@/infrastructure/audit/audit-route";
 import { storageQuotaErrorResponse } from "@/infrastructure/http/storage-quota-errors";
@@ -37,9 +40,12 @@ async function handlePOST(request: Request, context: { params: Promise<{ fileId:
         if (!await canSeeFile(application, fileId)) return errorResponse("file_not_found", "Upload intent was not found.", 404);
         if (!hasDepartmentRole(application, upload.departmentId, "editor"))
             return errorResponse("department_forbidden", "Editor access to this department is required.", 403);
+        const queued = await findUploadScan(application, fileId, "initial_upload");
+        if (queued) return scanResponse(queued,true);
         if (upload.status === "available" && upload.completedAt) {
             return Response.json({ data: { fileId, status: "available" } }, { headers: { "Cache-Control": "no-store" } });
         }
+        requireMalwareScan();
         if (upload.status !== "pending_upload" || upload.completedAt) {
             return errorResponse("upload_not_pending", "This upload cannot be completed.", 409);
         }
@@ -48,20 +54,24 @@ async function handlePOST(request: Request, context: { params: Promise<{ fileId:
         }
 
         const objectStorage = new SupabaseObjectStorage();
-        const objectInfo = await objectStorage.getObjectInfo(upload.bucketId, upload.objectKey);
+        const objectInfo = await validationObjectInfo(objectStorage, upload.bucketId, upload.objectKey);
         if (!objectInfo) return errorResponse("object_not_found", "The uploaded object was not found.", 409);
 
-        const actualContentType = objectInfo.contentType ?? upload.contentType;
+        let actualContentType = objectInfo.contentType ?? upload.contentType;
         if (objectInfo.sizeBytes > getMaxUploadSizeBytes()) {
             await repository.quarantineUpload(application, fileId, application.tenantId, application.applicationId,objectInfo.sizeBytes,actualContentType);
-            await objectStorage.deleteObject(upload.bucketId, upload.objectKey).catch((error) => {
-                logger.error("Could not remove oversized uploaded object", {
-                    message: error instanceof Error ? error.message : "Unknown storage error",
-                });
-            });
             return errorResponse("file_too_large", "Uploaded object exceeds the configured size limit.", 413);
         }
 
+        try {
+            actualContentType = await validateStoredFile(objectStorage, upload.bucketId, upload.objectKey, upload.originalName, upload.contentType, objectInfo);
+        } catch (error) {
+            if (error instanceof FileValidationError && error.status === 415) {
+                await repository.quarantineUpload(application, fileId, application.tenantId, application.applicationId,
+                    objectInfo.sizeBytes, actualContentType, error.code, validationAudit(upload.contentType, error.detectedMime));
+            }
+            throw error;
+        }
         const completed = await repository.completeUpload(
             application,
             fileId,
@@ -70,18 +80,17 @@ async function handlePOST(request: Request, context: { params: Promise<{ fileId:
             departmentIdsForRole(application, "editor"),
             objectInfo.sizeBytes,
             actualContentType,
+            validationAudit(upload.contentType, actualContentType),
+            objectInfo,
         );
         if (!completed) return errorResponse("upload_not_pending", "This upload is no longer pending.", 409);
         if(typeof completed==="string") {
-            await objectStorage.deleteObject(upload.bucketId,upload.objectKey).catch(()=>undefined);
             throw new StorageQuotaError(completed);
         }
 
-        return Response.json(
-            { data: { fileId, status: "available", sizeBytes: objectInfo.sizeBytes, contentType: actualContentType } },
-            { headers: { "Cache-Control": "no-store" } },
-        );
+        return scanResponse(completed,true);
     } catch (error) {
+        if (error instanceof MalwareScanError || error instanceof FileValidationError) return errorResponse(error.code, error.message, error.status);
         const quota=storageQuotaErrorResponse(error);
         if(quota) return quota;
         const serviceError = error as { code?: string; message?: string };

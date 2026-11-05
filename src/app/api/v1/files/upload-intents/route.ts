@@ -1,3 +1,5 @@
+import { MalwareScanError, requireMalwareScan, uploadFolder } from "@/infrastructure/database/malware-scan-jobs";
+import { FileValidationError } from "@/domain/files/file-validation";
 import { logger } from "@/infrastructure/security/logger.mjs";
 import { auditRoute } from "@/infrastructure/audit/audit-route";
 import { RequestFileUpload } from "@/application/files/request-file-upload";
@@ -14,6 +16,7 @@ const UUID_PATTERN = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3
 interface UploadIntentRequest {
     ownerSubject?: unknown;
     departmentId?: unknown;
+    folderId?: unknown;
     originalName?: unknown;
     contentType?: unknown;
     sizeBytes?: unknown;
@@ -67,6 +70,7 @@ async function handlePOST(request: Request): Promise<Response> {
             return errorResponse("forbidden", "The API key does not have files:write scope.", 403);
         }
 
+        requireMalwareScan();
         let body: UploadIntentRequest;
         try {
             const parsed = await readJsonBody(request);
@@ -124,12 +128,14 @@ async function handlePOST(request: Request): Promise<Response> {
             return errorResponse("invalid_checksum", "checksumSha256 must be a 64-character SHA-256 hex value.", 400);
         }
 
+        const folderId = await uploadFolder(application,departmentId,body.folderId);
         const useCase = new RequestFileUpload(new PostgresUploadIntentRepository(), new SupabaseObjectStorage());
         const upload = await useCase.execute({
             auditActor: application,
             tenantId: application.tenantId,
             applicationId: application.applicationId,
             departmentId,
+            folderId,
             ownerSubject,
             originalName,
             contentType,
@@ -139,6 +145,8 @@ async function handlePOST(request: Request): Promise<Response> {
 
         return Response.json({ data: upload }, { status: 201, headers: { "Cache-Control": "no-store" } });
     } catch (error) {
+        if (error instanceof MalwareScanError) return errorResponse(error.code,error.message,error.status);
+        if (error instanceof FileValidationError) return errorResponse(error.code, error.message, error.status);
         const quota=storageQuotaErrorResponse(error);
         if(quota) return quota;
         const serviceError = error as { code?: string; message?: string };

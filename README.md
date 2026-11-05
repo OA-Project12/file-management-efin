@@ -1,10 +1,57 @@
 # File Storage API
 
+## ตรวจประเภทไฟล์จาก bytes — signature-v1
+
+การตรวจชนิดเป็นขั้นก่อนเข้าคิว Malware scanning เมื่อผ่านการตรวจขนาดและชนิดแล้ว `complete` จึงตอบ `202 pending_scan`
+
+Upload ใหม่และ version ใหม่รับเฉพาะ PDF (`.pdf`, `application/pdf`), JPEG (`.jpg`/`.jpeg`, `image/jpeg`) และ PNG (`.png`, `image/png`) นามสกุลและ MIME ไม่สนตัวพิมพ์ใหญ่เล็ก แต่ต้องตรงกับ signature และ Storage MIME ทั้งหมด ใช้ `originalName` ของฉบับ ไม่ใช้ display name; API clients ต้องส่ง MIME ที่ตรง ไม่รับ `application/octet-stream` ส่วน UI อนุมาน MIME จากนามสกุลเมื่อ browser ส่ง `File.type` ว่างเท่านั้น ทั้ง intent และ PUT ใช้ค่าเดียวกัน
+
+Flow เดิม: สร้าง intent → PUT ตรง Storage → complete. Intent ปฏิเสธนามสกุล/MIME ที่ไม่รองรับก่อน grant/reservation; batch แยกผลรายไฟล์ Complete อ่าน prefix ไม่เกิน 1,024 bytes จาก private Storage ฝั่ง server (deadline 15 วินาที), ตรวจ metadata ก่อน/หลังและใช้ If-Match เมื่อมี ETag ก่อนเข้าคิวสแกน PDF ตรวจ `%PDF-`, JPEG ตรวจ `FF D8 FF`, PNG ตรวจ signature 8 bytes เท่านั้น **ไม่ใช่ parser ตรวจโครงสร้าง/ไฟล์เสีย และไม่ใช่ผลสแกนไวรัสหรือรับรองความปลอดภัย** ไฟล์ที่สร้าง signature ปลอม หรือ PDF ที่มี active content อาจผ่านชั้นนี้ได้; malware scanning และ preview hardening เป็นงานแยก
+
+| Error code | HTTP | ความหมาย |
+|---|---|---|
+| `file_type_not_allowed` | 415 | นามสกุลหรือ MIME ไม่รองรับ |
+| `file_signature_invalid` | 415 | ว่าง, signature สั้นหรือไม่รู้จัก |
+| `file_type_mismatch` | 415 | เนื้อหาไม่ตรงกับนามสกุล/declared MIME/Storage MIME |
+| `file_validation_unavailable` | 503 | Storage/stream/timeout ยังตรวจไม่ได้ คง pending และเรียก complete ใหม่ได้ภายในอายุ intent |
+| `object_changed` | 409 | Metadata/ETag/version เปลี่ยนระหว่างตรวจ |
+
+Upload ที่ตรวจไม่ผ่านเป็น `quarantined` พร้อม Audit และ quota settlement ใน transaction เดียว ไม่ publish และไม่แทน current version ไม่ลบ object ทันทีระหว่าง signed upload grant ยังใช้ได้ ใช้ cleanup เดิมหลังหมดอายุพร้อม grace period และคืนโควตาเมื่อ worker ยืนยันการลบเท่านั้น ความล้มเหลวของการอ่านไม่ถือว่าไฟล์ผิดประเภทและไม่ retry mutation อัตโนมัติ
+
+ไฟล์เดิมยังค้นหา/preview/download ตามสิทธิ์และรูปแบบเดิม ไม่มี backfill หรือสแกนย้อนหลัง Complete ที่เสร็จแล้วเป็น idempotent การ restore จากถังขยะต้องตรวจฉบับปัจจุบันก่อน; restore เวอร์ชันตรวจทั้งต้นฉบับและสำเนาก่อน publish หากไม่ผ่านเก็บฉบับปัจจุบันเดิมไว้ ไม่เปลี่ยน bucket MIME allowlist, schema, endpoint หรือ scope และไม่มี deployment ในงานนี้
+
+`npm.cmd run test:security` รวม policy/stream tests และ API/repository tests ของ file validation ด้วย PostgreSQL fixture และ Storage จำลอง ใช้ขั้นตอน disposable PostgreSQL/Redis ด้านล่าง ส่วน `npm.cmd run test:security-browser` รวม upload picker/drop, MIME ว่าง, mixed files และ validation error/unavailable บน 1440px/390px ด้วย mocked APIs ใน production build การตรวจบน Railway/บัญชีจริงให้ทีมดำเนินการเอง
+
+ผลตรวจในเครื่องรอบนี้: backend/security 35 กรณี, browser security/upload 5 กรณี, TypeScript, lint และ webpack production build ผ่าน รวมการจำลองลบ object ไม่สำเร็จแล้ว worker retry ก่อนคืนพื้นที่ ชุดใหม่ถูกรวมใน npm commands ที่ workflow เดิมเรียกแล้ว แต่ยังไม่ได้ push/run GitHub Actions หรือ deploy release นี้ การตรวจ `upsert:false` เป็น adapter contract test ไม่ใช่การยืนยันพฤติกรรม signed upload URL กับ Storage จริง
+
 ### Security release preparation — 4 พฤศจิกายน 2569
 
 Tracked Playwright and Gitleaks configuration is required for clean-checkout CI. Release preflight passed: 18 security tests against disposable PostgreSQL/Redis, 4 browser security tests against a local production build using mocked services, TypeScript, lint and webpack production build. This includes the wrapped Next.js Request regression that previously returned 503 for JSON POST requests. These results do not replace team acceptance testing on Railway.
 
 Deploy web first and worker second from the same clean release commit using Railway CLI and their existing service-specific configuration paths. Keep `RATE_LIMIT_MODE=report`; this counts/reports excess requests but does not block them. Verify Redis from inside the deployed web container with a PING, independently of report-mode readiness. Record release/deployment IDs and the previous deployment IDs in an operator report without credentials. Do not enable enforce until the team confirms normal flows, ingress IP handling and limits. No schema migration or quota apply is part of this release.
+
+## Malware scanning และ Quarantine
+
+1. สร้าง intent และ PUT ไปยัง private Supabase Storage เหมือนเดิม ส่ง `folderId` ใน intent เมื่อต้องการอัปโหลดเข้าที่ปลายทางโดยตรง
+2. เรียก `POST /api/v1/files/{fileId}/complete` หรือ `POST /api/v1/files/{fileId}/versions/{versionId}/complete` เมื่อ PUT สำเร็จ การกู้คืนใช้ `POST /api/v1/files/{fileId}/restore` และ `POST /api/v1/files/{fileId}/versions/{versionId}/restore` ตามเดิม
+3. HTTP `202` คืน `{ "data": { "fileId": "...", "scanId": "...", "status": "pending_scan", "statusUrl": "/api/v1/files/.../scan-jobs/..." } }` และมี `versionId` สำหรับงานระดับเวอร์ชัน เรียก GET ที่ `statusUrl` ด้วย identity ที่มี `files:write` และสิทธิ์ Editor ขึ้นไปในขอบเขตเดิม ผู้ใช้ API key ต้องแนบ `?ownerSubject=<เจ้าของไฟล์>` แบบ URL-encoded
+4. อ่าน `data.status` ซึ่งเป็น `pending_scan`, `scanning`, `available`, `quarantined` หรือ `scan_failed` เมื่อพบสถานะสุดท้ายสามแบบให้หยุด polling การเรียก complete ซ้ำคืน scan ID เดิม โดยตอบ 200 เมื่องานจบแล้ว ไฟล์ที่เสร็จก่อน release นี้อาจคืน 200 พร้อม `available` โดยไม่มี scan ID
+
+ไฟล์ใหม่ออก preview/download URL ได้หลัง `available` ฉบับปัจจุบันยังใช้ได้ระหว่างสแกนฉบับใหม่ ไฟล์เดิมอ่านได้ตามสิทธิ์เดิมและไม่มีการสแกนย้อนหลังอัตโนมัติ หากพบภัยระหว่าง restore ระบบปิดการออก URL ใหม่ของ object นั้น ส่วนลิงก์ที่ออกไปก่อนหน้าอาจใช้ได้ถึงเวลาหมดอายุหรือจน object ถูกลบ พื้นที่ยังถูกคิดจน worker ยืนยันว่า object ถูกลบหรือไม่มีอยู่แล้ว ดู [Supabase signed URL behavior](https://supabase.com/docs/guides/storage/serving/downloads#revoke-signed-urls)
+
+ClamAV ตรวจได้ตามลายเซ็นและขีดจำกัดของ engine PDF เข้ารหัสหรือไฟล์ที่เกินขีดจำกัดถูกระบุว่าตรวจไม่ได้ การตรวจไม่ผ่านชั่วคราวลองสูงสุด 5 ครั้ง ภายใน 2 ชั่วโมง ไฟล์ใหม่ที่จบโดยเปิดใช้ไม่ได้เข้า cleanup หลัง upload grant หมดอายุและผ่าน grace 1 ชั่วโมง ต้นฉบับเดิมยังอยู่หาก scanner ขัดข้องหรือตรวจไม่ได้
+
+### เปิดใช้บน Railway
+
+1. นำ migration `db/migrations/20261105_malware_scan.sql` ไปใช้ผ่านผู้ดูแล schema หลังตรวจ migration เดิมของ versioning, folder access, quota และ cleanup ให้ครบ ตรวจว่า `filesvc_api` และ `filesvc_worker` เป็นคนละ role, schema `filesvc` ไม่เปิดผ่าน Data API และ Storage policies ไม่อนุญาตให้ `anon` หรือ `authenticated` อ่านไฟล์ตรงจาก bucket นี้
+2. สร้าง service `efin-dms-clamav` จาก Dockerfile ใน `deploy/clamav` ใช้ RAM เริ่มต้น 4 GiB และ mount volume ที่ `/var/lib/clamav` เพื่อเก็บฐานลายเซ็น ให้ FreshClam อัปเดตได้และใช้ private networking พอร์ต 3310 โดยไม่สร้าง public domain หรือ TCP proxy Service นี้ใช้เฉพาะ ClamAV config และไม่มี DB หรือ Supabase credentials ดู [ClamAV Docker](https://docs.clamav.net/manual/Installing/Docker.html) และ [Railway private networking](https://docs.railway.com/networking/private-networking)
+3. ใช้ web และ worker release เดียวกัน ตั้ง `MALWARE_SCAN_MODE=paused` ทั้งสอง service ก่อนตั้งค่า `CLAMD_HOST=efin-dms-clamav.railway.internal` และ `CLAMD_PORT=3310` ให้ worker ตรวจ `VERSION` และทดสอบ `INSTREAM` ด้วยข้อมูลจำลองในสภาพแวดล้อมทดสอบ ตรวจ bucket และ `MAX_UPLOAD_SIZE_BYTES` ให้สอดคล้องกับเพดาน ClamAV 25 MiB
+4. หลัง worker เข้าถึง clamd และฐานลายเซ็นที่โหลดมีอายุไม่เกิน 72 ชั่วโมง ให้เปลี่ยน worker เป็น `required` ก่อนเปิด web เป็น `required` ตรวจผล clean/infected, สิทธิ์การอ่าน และการคืนพื้นที่โดยใช้ข้อมูลทดสอบ
+5. ติดตาม `Malware scan queue` ซึ่งรายงานจำนวนงานและอายุงานเก่าสุดเป็นมิลลิวินาที รวมถึง `Malware scan retry scheduled`, `Malware scan failed`, `scanner_signatures_stale` และ `Malware cleanup deferred` ใน worker logs
+
+เมื่อพักระบบให้เปลี่ยนเว็บเป็น `paused` ก่อน worker และรอ attempt ที่เริ่มไปแล้วจบ งานค้างยังอยู่ใน DB และ resume ตามอายุงานที่เหลือ เว็บจะตอบ `503 malware_scan_paused` สำหรับ upload/restore ใหม่ ไฟล์ที่อ่านได้อยู่ยังอ่านได้ตามสิทธิ์เดิม รักษา release ที่มี scan gate และ migration นี้ไว้ระหว่าง rollback สำหรับ quota maintenance ให้ใช้ขั้นตอนหยุด mutation และ drain ตามเดิม โดยรอ scan ที่กำลังทำงานด้วย
+
+ชุด `npm run test:security` ใช้ PostgreSQL/Redis ชั่วคราว และ Storage/ClamD จำลอง ส่วน `npm run test:security-browser` ตรวจสถานะอัปโหลดกับ production build แบบ mock ทดสอบ ClamAV จริงด้วยไฟล์สะอาดและ EICAR ใน service ทดสอบที่แยกจากข้อมูลจริง
 
 ## Security hardening — รอบแรก
 
@@ -432,11 +479,11 @@ New key secrets are displayed only in the create response and cannot be retrieve
 - The authentication query derives tenant and application identity from the key row; it never trusts tenant or application IDs from caller-supplied headers or request bodies.
 - API keys are server-to-server credentials. Do not place them in browser code or `NEXT_PUBLIC_` variables. A browser app should call its own backend, which then calls this service.
 - `POST /api/v1/files/upload-intents` requires `files:write`; it records a `pending_upload` file and upload intent, then returns a short-lived Storage upload grant. The caller supplies `ownerSubject` from its own authenticated-user context; tenant and application IDs always come from the API key.
-- `POST /api/v1/files/{fileId}/complete` verifies that the object exists, checks its actual size against the configured limit, and changes its state to `available`. Oversized uploads are quarantined and removed where possible.
+- `POST /api/v1/files/{fileId}/complete` verifies that the object exists, checks actual size and signature, and queues malware scanning with `202 pending_scan`. Oversized uploads are quarantined and cleaned up after the upload grant expires and its grace period ends.
 - `POST /api/v1/files/{fileId}/download-url` requires `files:read` and an `ownerSubject`; it returns a five-minute signed URL only when the file belongs to the key's tenant/application and that owner.
 - `POST /api/v1/files/search` requires `files:read` and an `ownerSubject`; it returns available file metadata with cursor pagination, without exposing Storage object paths.
 - `POST /api/v1/files/{fileId}/delete` requires `files:write` and Editor/Admin role; it moves an available file to trash while retaining the Storage object. It returns `200` with `trashed: true`.
-- `GET /api/v1/files/trash` lists trashed files with cursor pagination. `POST /api/v1/files/{fileId}/restore` checks that the Storage object still exists before restoring an Editor/Admin-accessible file.
+- `GET /api/v1/files/trash` lists trashed files with cursor pagination. `POST /api/v1/files/{fileId}/restore` queues an Editor/Admin-accessible file for a scan. It stays in trash until the scan passes.
 - `POST /api/v1/files/{fileId}/purge` requires Admin role; it atomically queues permanent deletion in `filesvc.outbox` and returns `202`.
 - The outbox worker reads `file.object_delete_requested`, removes the Storage object idempotently, marks the file `deleted`, and marks the event processed. Failed events are retried with capped exponential backoff.
 
