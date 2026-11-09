@@ -15,12 +15,23 @@ interface ApplicationKeyRow extends QueryResultRow {
 }
 
 const API_KEY_PATTERN = /^fsvc_([a-f0-9]{12})\.([A-Za-z0-9_-]{43})$/i;
+const UUID = /^[a-f0-9]{8}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{12}$/i;
+type UserSessionDenial = "session_expired" | "account_suspended" | "membership_denied";
 
 const identities = new WeakMap<Request, Promise<AuthenticatedApplication | null>>();
+const sessionDenials = new WeakMap<Request, UserSessionDenial>();
+export const getUserSessionDenial = (request: Request) => sessionDenials.get(request);
+
 export function authenticateApplicationKey(request: Request, refresh = false): Promise<AuthenticatedApplication | null> {
-    if (refresh) identities.delete(request);
+    if (refresh) {
+        identities.delete(request);
+        sessionDenials.delete(request);
+    }
     let pending = identities.get(request);
-    if (!pending) { pending = authenticate(request); identities.set(request, pending); }
+    if (!pending) {
+        pending = authenticate(request);
+        identities.set(request, pending);
+    }
     return pending;
 }
 async function authenticate(request: Request): Promise<AuthenticatedApplication | null> {
@@ -29,7 +40,7 @@ async function authenticate(request: Request): Promise<AuthenticatedApplication 
     if (!bearerMatch || bearerMatch[1].length > 8192) return null;
 
     if (!bearerMatch[1].startsWith("fsvc_")) {
-        return authenticateUserToken(bearerMatch[1]);
+        return authenticateUserToken(request, bearerMatch[1]);
     }
     if (bearerMatch[1].length > 96) return null;
 
@@ -113,26 +124,49 @@ async function authenticate(request: Request): Promise<AuthenticatedApplication 
     };
 }
 
-async function authenticateUserToken(token: string): Promise<AuthenticatedApplication | null> {
+async function authenticateUserToken(request: Request, token: string): Promise<AuthenticatedApplication | null> {
     const url = process.env.SUPABASE_URL;
     const secret = process.env.SUPABASE_SECRET_KEY;
     const applicationId = process.env.AUTH_APPLICATION_ID;
     if (!url || !secret || !applicationId) return null;
     const auth = createClient(url, secret, { auth: { persistSession: false, autoRefreshToken: false }, global: { fetch: boundedFetch } });
     const { data, error } = await auth.auth.getClaims(token);
+    if (error) {
+        if (error.name === "AuthRetryableFetchError" || (error.status ?? 0) >= 500) throw error;
+        return null;
+    }
     const userId = data?.claims?.sub;
-    if (error || typeof userId !== "string") return null;
+    const sessionId = data?.claims?.session_id;
+    if (typeof userId !== "string" || !UUID.test(userId)) return null;
+    if (typeof sessionId !== "string" || !UUID.test(sessionId)) {
+        sessionDenials.set(request, "session_expired");
+        return null;
+    }
+    const path = new URL(request.url).pathname.replace(/\/$/, "");
+    const countsAsActivity =
+        request.method !== "HEAD" &&
+        (path === "/api/v1/me" ? request.headers.get("X-DMS-Session-Activity") === "1" : !path.includes("/scan-jobs/"));
 
     const pool = getDatabasePool();
-    const membership = await pool.query<{ tenant_id: string; is_admin: boolean }>(
-        `select tu.tenant_id, tu.is_admin from filesvc.tenant_users tu
+    const membership = await pool.query<{ tenant_id: string; is_admin: boolean; status: string; session_valid: boolean | null }>(
+        `select tu.tenant_id, tu.is_admin, tu.status,
+            case when tu.status = 'active' then
+              filesvc.check_dms_session($3, tu.user_id, a.id, tu.session_not_before, $4)
+            end as session_valid
+     from filesvc.tenant_users tu
      join filesvc.tenants t on t.id = tu.tenant_id and t.status = 'active'
      join filesvc.applications a on a.tenant_id = tu.tenant_id and a.id = $2 and a.status = 'active'
-     where tu.user_id = $1 and tu.status = 'active'`,
-        [userId, applicationId],
+     where tu.user_id = $1`,
+        [userId, applicationId, sessionId, countsAsActivity],
     );
     const member = membership.rows[0];
-    if (!member) return null;
+    if (member?.status !== "active" || !member.session_valid) {
+        sessionDenials.set(
+            request,
+            member?.status === "suspended" ? "account_suspended" : member?.status === "active" ? "session_expired" : "membership_denied",
+        );
+        return null;
+    }
     const grants = await pool.query<DepartmentGrant>(
         `select d.id, d.code, d.name,
             case when $4::boolean then 'admin' else ur.role end as role

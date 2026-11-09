@@ -74,6 +74,13 @@ content_path = "./supabase/templates/recovery.html"
 
 [Email templates](https://supabase.com/docs/guides/auth/auth-email-templates) · [Redirect URLs](https://supabase.com/docs/guides/auth/redirect-urls) · [Custom SMTP](https://supabase.com/docs/guides/auth/auth-smtp)
 
+## การจัดการ Session
+
+- บัญชี Supabase Auth ใช้งาน EFIN DMS ได้สูงสุด **8 ชั่วโมงจากเวลาเข้าสู่ระบบ** และต้องเข้าสู่ระบบใหม่เมื่อไม่มีการใช้งาน **30 นาที** ตัวตรวจฝั่ง API ใช้เวลาในฐานข้อมูล คำขอใช้งานทั่วไปและกิจกรรมบนหน้าเว็บนับเป็นการใช้งาน ส่วนการตรวจสถานะอัตโนมัติ การ refresh token และการตรวจงานสแกนไม่นับ
+- เมนู **ออกจากระบบ** เพิกถอนเฉพาะ session ของโปรไฟล์เบราว์เซอร์ที่กด ทุกแท็บที่ใช้ session เดียวกันจะออกพร้อมกัน ส่วนเบราว์เซอร์หรือโปรไฟล์อื่นที่ล็อกอินแยกยังใช้งานได้ API ของ EFIN DMS ปฏิเสธ token ของ session ที่เพิกถอนแล้ว ลิงก์ Storage ที่ออกไปก่อนหน้านี้ยังมีอายุของตัวเอง
+- ระงับสมาชิกแล้ว API จะปฏิเสธคำขอใหม่ของบัญชีนั้นในองค์กร เมื่อเปิดสมาชิกอีกครั้งต้องเข้าสู่ระบบใหม่ ข้อมูลสิทธิ์หน่วยงานยังใช้ต่อได้ กฎนี้ใช้กับ Auth user ส่วน API keys ใช้การหมดอายุและเพิกถอนของ key ตามเดิม
+- ก่อน deploy เว็บรุ่นนี้ ให้ผู้ดูแลฐานข้อมูล apply [migration ของ Session](db/migrations/20261109073836_dms_user_sessions.sql) กับ stack ทดสอบก่อน แล้วตรวจสิทธิ์ role `filesvc_api` และทดสอบสองเบราว์เซอร์ก่อน apply กับฐานข้อมูลจริง เว็บ pre-deploy จะตรวจ migration และสิทธิ์ให้อีกครั้ง ผู้ใช้ที่มี session เก่ากว่า 30 นาทีเมื่อเปิดกติกาครั้งแรกอาจต้องเข้าสู่ระบบใหม่ เพราะยังไม่มีประวัติกิจกรรมก่อนเปิดใช้
+
 ## Security hardening — รอบแรก
 
 เพิ่ม guard กลางสำหรับ `/api/v1/*`, Redis token buckets, bounded JSON reader, timeouts, security headers และ structured logs โดยคงสิทธิ์และ API เดิม ไม่มี migration production
