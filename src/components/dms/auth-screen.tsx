@@ -83,6 +83,9 @@ export function AuthScreen({
             <Button type="submit" className="auth-submit" disabled={busy}>
               {busy ? "กำลังเข้าสู่ระบบ…" : "เข้าสู่ระบบ"}
             </Button>
+            <Link className="quiet" href="/forgot-password">
+              ลืมรหัสผ่าน?
+            </Link>
             {onSignOut && (
               <button className="secondary" type="button" onClick={onSignOut}>
                 ออกจากระบบบัญชีนี้

@@ -865,6 +865,7 @@ tbody tr:hover {
 .auth-page {
   min-height: 100dvh;
   display: grid;
+  grid-template-columns: minmax(0, 1fr);
   place-items: center;
   padding: 32px 16px;
 }

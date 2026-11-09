@@ -51,6 +51,29 @@ ClamAV ตรวจได้ตามลายเซ็นและขีดจ�
 
 ทดสอบ ClamAV ด้วยไฟล์สะอาดและ EICAR ใน service ทดสอบที่แยกจากข้อมูลจริง สำหรับการทดสอบผ่านแอป ให้ตรวจว่าไฟล์ขึ้น `pending_scan` หลังอัปโหลดและขอ preview/download ได้เมื่อ worker บันทึกสถานะ `available` แล้ว
 
+## ลืมรหัสผ่าน
+
+หน้าเข้าสู่ระบบมีลิงก์ไปที่ `/forgot-password` เพื่อขออีเมลจาก Supabase Auth และใช้ `/reset-password` สำหรับตั้งรหัสผ่านใหม่ ลิงก์ Recovery ต้องมี token ที่ยังใช้ได้ และจะถูกแลกเมื่อผู้ใช้กด **ดำเนินการต่อ** รหัสผ่านใหม่ต้องมีอย่างน้อย 12 ตัวอักษร
+
+ทดสอบด้วย Supabase CLI และ Mailpit ในโปรเจกต์ local แยกจาก Production ใช้ URL และ publishable key ของ stack local ในตัวแปร `NEXT_PUBLIC_SUPABASE_URL` และ `NEXT_PUBLIC_SUPABASE_PUBLISHABLE_KEY` เปิด Next.js ที่ `http://localhost:3000` และเพิ่ม URL ต่อไปนี้ใน `auth.additional_redirect_urls` ของ Supabase local โดยคง URL เดิมไว้
+
+```toml
+[auth]
+additional_redirect_urls = ["http://localhost:3000/reset-password"]
+
+[auth.email.template.recovery]
+subject = "ตั้งรหัสผ่านใหม่สำหรับ EFIN DMS"
+content_path = "./supabase/templates/recovery.html"
+```
+
+คัดลอก [เทมเพลต Recovery](db/auth-templates/recovery.html) ไปที่ `supabase/templates/recovery.html` ใน working directory ของ stack local แล้วเริ่ม stack ด้วย configuration นี้ ดู URL ของ Mailpit จาก `supabase status` สร้างบัญชีอีเมลจำลองใน Auth แล้วขอลิงก์ผ่านหน้าเว็บ
+
+ก่อนเปิดบน Railway ให้เพิ่ม URL `https://efin-dms-web-production.up.railway.app/reset-password` แบบตรงตัวใน Supabase Redirect URLs และใส่ HTML จากเทมเพลตใน **Authentication → Email Templates → Reset Password** ทดสอบส่งผ่าน Custom SMTP โดยปิด link tracking สำหรับ Auth email คงเทมเพลต Invite และ Redirect URL ของ `/set-password` ไว้ตามเดิม
+
+หลังรีเซ็ตสำเร็จ ระบบขอเพิกถอน refresh tokens ทุกอุปกรณ์ของบัญชีที่รีเซ็ต Access token เดิมยังอาจใช้ได้จนหมดอายุตามค่าของ Supabase Auth
+
+[Email templates](https://supabase.com/docs/guides/auth/auth-email-templates) · [Redirect URLs](https://supabase.com/docs/guides/auth/redirect-urls) · [Custom SMTP](https://supabase.com/docs/guides/auth/auth-smtp)
+
 ## Security hardening — รอบแรก
 
 เพิ่ม guard กลางสำหรับ `/api/v1/*`, Redis token buckets, bounded JSON reader, timeouts, security headers และ structured logs โดยคงสิทธิ์และ API เดิม ไม่มี migration production
