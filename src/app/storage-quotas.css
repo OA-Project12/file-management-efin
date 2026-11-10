@@ -1,8 +1,3 @@
-:root {
-  --quota-warning: #854d0e;
-  --quota-warning-bg: #fffbeb;
-  --quota-danger-bg: #fff0f2;
-}
 .quota-page {
   display: flex;
   flex-direction: column;
@@ -93,6 +88,10 @@
     var(--muted) 5px
   );
 }
+.quota-remaining {
+  background: #dedaf0;
+  border: 1px solid #bcb2db;
+}
 .quota-desktop {
   border: 1px solid var(--line);
   background: var(--card);
@@ -147,6 +146,19 @@
   line-height: 1.5;
   overflow-wrap: anywhere;
 }
+.quota-capacity-labels {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  width: 100%;
+}
+.quota-capacity-labels strong {
+  color: var(--ink);
+  font-size: 13px;
+  font-weight: 600;
+  line-height: 1.5;
+  overflow-wrap: anywhere;
+}
 .quota-number {
   font-variant-numeric: tabular-nums;
   overflow-wrap: anywhere;
@@ -162,13 +174,13 @@
   border-color: var(--line);
 }
 .quota-status.quota-warning {
-  background: var(--quota-warning-bg);
-  color: var(--quota-warning);
+  background: var(--warning-surface);
+  color: var(--warning);
   border-color: currentColor;
 }
 .quota-status.quota-over,
 .quota-status.quota-full {
-  background: var(--quota-danger-bg);
+  background: var(--danger-surface);
   color: var(--destructive);
   border-color: currentColor;
 }
@@ -178,10 +190,11 @@
 }
 .quota-meter {
   width: 100%;
-  height: 10px;
+  height: 12px;
   display: flex;
-  border-radius: 5px;
-  background: var(--muted);
+  border-radius: 999px;
+  background: #dedaf0;
+  box-shadow: inset 0 0 0 1px #bcb2db;
   overflow: hidden;
 }
 .quota-meter > span {
@@ -189,7 +202,7 @@
   flex-shrink: 0;
 }
 .quota-meter > .quota-reserved {
-  border-left: 2px solid white;
+  min-width: 0;
 }
 .quota-mobile {
   display: none;

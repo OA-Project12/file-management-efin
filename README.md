@@ -260,20 +260,20 @@ docker run --rm --name efin-dms-web-test -p 127.0.0.1:3018:3000 --env-file .quot
 - Worker ตรวจการโหลด modules และปฏิเสธเริ่มงานเมื่อไม่มี configuration แล้ว ยังไม่ได้เริ่ม worker จริงเพื่อไม่ประมวลผลงานลบเดิมก่อนตรวจขั้นตอนเปิดระบบ
 - ยังไม่ได้ตรวจบน Railway: สร้าง project/services/domain, latency จาก Singapore, invitation ผ่าน Railway URL, live-role smoke tests, cloud worker และ restart/redeploy ขณะใช้ข้อมูลจริง ต้องมีบัญชี Railway ที่เชื่อมต่อก่อน ผล local/container ไม่ถือเป็นผล smoke test บน Railway
 
-## CURRENT design implementation
+## Indigo Workspace interface
 
-The application implements the CURRENT screens and interactions from `design/MASTER.md` and `design/EFIN_DMS_UX_UI_SPEC.md`. The light Neutral + Teal theme, IBM Plex Sans Thai, controls, focus indicators and responsive layouts share semantic tokens. Active styles are `globals.css`, `dms.css` and the scoped version/quota styles; the legacy redesign and search styles are no longer imported.
+The Indigo Workspace interface uses a light violet palette, IBM Plex Sans Thai and shared semantic tokens. Active styles are `globals.css`, `dms.css` and the scoped version/quota styles. The sign-in illustration is served from `public/indigo-auth.jpg`.
 
 - File workspace, trash scope and storage filters are independent. Returning to files preserves the last workspace; **ไฟล์ทุกหน่วยงาน** explicitly clears its department/folder. Expanded navigation branches read immediate children through the existing folder API.
-- Desktop details use a 440px dock from 1312px; smaller widths use a modal sheet. Tablet navigation is a drawer; mobile has **ไฟล์ / ถังขยะ / เพิ่มเติม**, cards and full-screen forms. Unsaved changes require an explicit discard; active mutations/uploads block context changes.
+- Desktop navigation uses a department and folder sidebar, while mobile uses **เอกสาร / ถังขยะ / จัดการ** with a folder picker. File details use a wide modal on desktop and a full-screen panel on mobile. Unsaved changes require an explicit discard; active mutations/uploads block context changes.
 - Search retains applied/draft criteria, removable filter chips and cursor pagination. Preview/download only request URLs on user action; plain text renders as text. Dates display Thai Buddhist years in Asia/Bangkok, and audit wall-time filters explicitly convert UTC+7 independently of the browser timezone.
-- Upload queues distinguish sending, confirming, partial folder-move failure and unknown outcomes. Only pre-send retryable entries may start another upload. Version operation state belongs to the details owner so switching dock/sheet presentation does not abort a version upload.
+- Upload queues distinguish sending, confirming, partial folder-move failure and unknown outcomes. Only pre-send retryable entries may start another upload. Version operations retain their state in the details panel while they are in progress.
 - Trash uses a queued receipt after purge; it does not claim physical deletion or released quota. Quotas retain exact-byte conversion, revision checks and separate used/reserved presentation.
 - Auth users, including Tenant Admins, still do not receive `keys:manage`. The conditional key UI preserves one-time secret acknowledgement and can only be exercised with an authorized identity; no production entry point was added for ordinary Auth sessions.
 
 There are no new backend endpoints, database migrations, scopes, sharing features, folder CRUD, bulk operations or deep links in this change. Existing API authorization remains authoritative. Drafts and one-time content grants stay in memory; the existing Supabase Auth session persistence is unchanged.
 
-Use T01–T23 in the design specification as the manual acceptance checklist. Reports under `.quota-reports/` contain historical test results.
+Reports under `.quota-reports/` contain historical test results.
 
 ## File name and metadata keyword search
 

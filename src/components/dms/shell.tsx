@@ -1,274 +1,221 @@
 "use client";
+
 import { useCallback, useEffect, useMemo, useRef, useState, useSyncExternalStore, type ReactNode } from "react";
-import {
-    Building2,
-    ChevronDown,
-    ChevronRight,
-    ClipboardList,
-    Files,
-    FolderClosed,
-    HardDrive,
-    KeyRound,
-    LogOut,
-    Menu,
-    MoreHorizontal,
-    Plus,
-    Trash2,
-    UsersRound,
-} from "lucide-react";
-import { DialogShell } from "@/components/ui/dialog-shell";
+import { Building2, ChevronDown, ChevronRight, Files, FolderClosed, LogOut, Settings, Trash2, UserRound } from "lucide-react";
+import { DialogClose, DialogShell } from "@/components/ui/dialog-shell";
 import type { Api, Department, Folder, Identity, Scope, Tab } from "./model";
 import { errorText, roleLabel, isDenied, invalidateRequest } from "./model";
 
 export function useMediaQuery(query: string) {
-    const subscribe = useCallback(
-        (callback: () => void) => {
-            const media = window.matchMedia(query);
-            media.addEventListener("change", callback);
-            return () => media.removeEventListener("change", callback);
-        },
-        [query],
-    );
-    return useSyncExternalStore(
-        subscribe,
-        () => window.matchMedia(query).matches,
-        () => false,
+    const subscribe = useCallback((callback: () => void) => {
+        const media = window.matchMedia(query);
+        media.addEventListener("change", callback);
+        return () => media.removeEventListener("change", callback);
+    }, [query]);
+    return useSyncExternalStore(subscribe, () => window.matchMedia(query).matches, () => false);
+}
+
+const managementLabels = {
+    users: "ผู้ใช้และสิทธิ์",
+    storage: "พื้นที่จัดเก็บ",
+    audit: "ประวัติการใช้งาน",
+    keys: "API Keys",
+} as const;
+
+type ManagementTab = keyof typeof managementLabels;
+
+export function managementTabs(identity: Identity): ManagementTab[] {
+    const tabs: ManagementTab[] = [];
+    if (identity.isTenantAdmin) tabs.push("users");
+    if (identity.scopes.includes("files:read") &&
+        (identity.isTenantAdmin || identity.departments.some((department) => department.role !== "viewer"))) {
+        tabs.push("storage");
+    }
+    if (identity.isTenantAdmin) tabs.push("audit");
+    if (identity.scopes.includes("keys:manage")) tabs.push("keys");
+    return tabs;
+}
+
+function AccountMenu({ identity, onLogout, logoutBusy }: {
+    identity: Identity;
+    onLogout: () => void;
+    logoutBusy: boolean;
+}) {
+    const account = useRef<HTMLDetailsElement>(null);
+    const trigger = useRef<HTMLElement>(null);
+    return (
+        <details className="editorial-account" ref={account}
+            onBlur={(event) => {
+                if (!event.currentTarget.contains(event.relatedTarget)) event.currentTarget.open = false;
+            }}
+            onKeyDown={(event) => {
+                if (event.key === "Escape" && event.currentTarget.open) {
+                    event.currentTarget.open = false;
+                    trigger.current?.focus();
+                }
+            }}>
+            <summary aria-label="เมนูบัญชี" ref={trigger}>
+                <span className="account-avatar" aria-hidden="true"><UserRound /></span>
+                <span className="account-label">{identity.isTenantAdmin ? "ผู้ดูแลองค์กร" : "บัญชีสมาชิก"}</span>
+                <ChevronDown aria-hidden="true" />
+            </summary>
+            <div className="editorial-account-actions">
+                <button className="quiet" disabled={logoutBusy} onClick={() => {
+                    if (account.current) account.current.open = false;
+                    onLogout();
+                }}>
+                    <LogOut aria-hidden="true" /> {logoutBusy ? "กำลังออกจากระบบ…" : "ออกจากระบบ"}
+                </button>
+            </div>
+        </details>
     );
 }
-type Props = {
+
+function Brand() {
+    return <span className="indigo-brand"><span className="brand-mark" aria-hidden="true"><span /></span>EFIN DMS</span>;
+}
+
+export function AppShell({ api, identity, scope, folderRevision, tab, children, details,
+    onTab, onAll, onDepartment, onFolder, onLogout, logoutBusy }: {
     api: Api;
     identity: Identity;
     scope: Scope;
+    folderRevision: number;
     tab: Tab;
     children: ReactNode;
     details?: ReactNode;
-    folderRevision: number;
+    onTab: (tab: Tab) => void;
     onAll: () => void;
     onDepartment: (id: string) => void;
     onFolder: (scope: Scope) => void;
-    onTab: (tab: Tab) => void;
     onLogout: () => void;
     logoutBusy: boolean;
-    onCreate: () => void;
-};
-const titles: Record<Tab, string> = {
-    files: "พื้นที่เอกสาร",
-    trash: "ถังขยะ",
-    users: "ผู้ใช้และสิทธิ์",
-    audit: "ประวัติการใช้งาน",
-    storage: "พื้นที่จัดเก็บ",
-    keys: "API keys",
-};
-export function AppShell(props: Props) {
-    const desktop = useMediaQuery("(min-width: 1024px)");
-    const [drawer, setDrawer] = useState<"menu" | "more" | null>(null);
-    const act = (action: () => void) => {
-        setDrawer(null);
-        action();
-    };
-    const canStorage =
-        props.identity.scopes.includes("files:read") &&
-        (props.identity.isTenantAdmin || props.identity.departments.some((d) => d.role !== "viewer"));
-    function links(moreOnly = false) {
-        return (
-            <>
-                {!moreOnly && (
-                    <>
-                        <div className="caption">พื้นที่ทำงาน</div>
-                        <button
-                            className={`nav ${props.tab === "files" && !props.scope.departmentId ? "active" : ""}`}
-                            aria-current={props.tab === "files" && !props.scope.departmentId ? "page" : undefined}
-                            onClick={() => act(props.onAll)}
-                        >
-                            <Files aria-hidden="true" />
-                            ไฟล์ทุกหน่วยงาน
-                        </button>
-                        <button
-                            className={`nav ${props.tab === "trash" ? "active" : ""}`}
-                            aria-current={props.tab === "trash" ? "page" : undefined}
-                            onClick={() => act(() => props.onTab("trash"))}
-                        >
-                            <Trash2 aria-hidden="true" />
-                            ถังขยะ
-                        </button>
-                    </>
-                )}
-                {canStorage && (
-                    <button
-                        className={`nav ${props.tab === "storage" ? "active" : ""}`}
-                        aria-current={props.tab === "storage" ? "page" : undefined}
-                        onClick={() => act(() => props.onTab("storage"))}
-                    >
-                        <HardDrive aria-hidden="true" />
-                        พื้นที่จัดเก็บ
-                    </button>
-                )}
-                {(props.identity.isTenantAdmin || props.identity.scopes.includes("keys:manage")) && (
-                    <div className="caption">การจัดการ</div>
-                )}
-                {props.identity.isTenantAdmin && (
-                    <>
-                        <button
-                            className={`nav ${props.tab === "users" ? "active" : ""}`}
-                            aria-current={props.tab === "users" ? "page" : undefined}
-                            onClick={() => act(() => props.onTab("users"))}
-                        >
-                            <UsersRound aria-hidden="true" />
-                            ผู้ใช้และสิทธิ์
-                        </button>
-                        <button
-                            className={`nav ${props.tab === "audit" ? "active" : ""}`}
-                            aria-current={props.tab === "audit" ? "page" : undefined}
-                            onClick={() => act(() => props.onTab("audit"))}
-                        >
-                            <ClipboardList aria-hidden="true" />
-                            Audit Trail
-                        </button>
-                    </>
-                )}
-                {props.identity.scopes.includes("keys:manage") && (
-                    <button
-                        className={`nav ${props.tab === "keys" ? "active" : ""}`}
-                        aria-current={props.tab === "keys" ? "page" : undefined}
-                        onClick={() => act(() => props.onTab("keys"))}
-                    >
-                        <KeyRound aria-hidden="true" />
-                        API keys
-                    </button>
-                )}
-                {!moreOnly && (
-                    <>
-                        <div className="caption caption-actions">
-                            คลังหน่วยงาน
-                            {props.identity.scopes.includes("departments:manage") && (
-                                <button className="icon-button" aria-label="สร้างหน่วยงาน" onClick={() => act(props.onCreate)}>
-                                    <Plus aria-hidden="true" />
-                                </button>
-                            )}
-                        </div>
-                        <div className="department-tree">
-                            {props.identity.departments.map((department) => (
-                                <DepartmentBranch key={department.id} department={department} {...props} act={act} />
-                            ))}
-                        </div>
-                    </>
-                )}
-                <div className="account-menu">
-                    <span>{props.identity.isTenantAdmin ? "ผู้ดูแลองค์กร" : "บัญชีสมาชิก"}</span>
-                    <button className="nav" disabled={props.logoutBusy} onClick={() => act(props.onLogout)}>
-                        <LogOut aria-hidden="true" />
-                        {props.logoutBusy ? "กำลังออกจากระบบ…" : "ออกจากระบบ"}
-                    </button>
-                </div>
-            </>
-        );
-    }
+}) {
+    const management = managementTabs(identity);
+    const managing = tab !== "files" && tab !== "trash";
+    const firstManagement = management[0];
+    const navigation = (
+        <>
+            <button aria-current={tab === "files" ? "page" : undefined} onClick={() => onTab("files")}>
+                <Files aria-hidden="true" /> เอกสาร
+            </button>
+            <button aria-current={tab === "trash" ? "page" : undefined} onClick={() => onTab("trash")}>
+                <Trash2 aria-hidden="true" /> ถังขยะ
+            </button>
+            {firstManagement && (
+                <button aria-current={managing ? "page" : undefined} onClick={() => onTab(firstManagement)}>
+                    <Settings aria-hidden="true" /> จัดการ
+                </button>
+            )}
+        </>
+    );
     return (
         <div className="app-shell">
-            <a href="#main-content" className="skip-link">
-                ข้ามไปเนื้อหาหลัก
-            </a>
-            {desktop && (
-                <aside className="sidebar" aria-label="เมนูหลัก">
-                    <div className="brand">
-                        <span className="brand-mark">E</span>
-                        <span>
-                            EFIN <strong>DMS</strong>
-                        </span>
-                    </div>
-                    {links()}
-                </aside>
-            )}
-            <div className="app-column">
-                <header className="app-header">
-                    <button className="icon-button tablet-menu" aria-label="เปิดเมนูหลัก" onClick={() => setDrawer("menu")}>
-                        <Menu aria-hidden="true" />
+            <a href="#main-content" className="skip-link">ข้ามไปเนื้อหาหลัก</a>
+            <aside className="indigo-sidebar">
+                <Brand />
+                <nav className="sidebar-primary" aria-label="เมนูหลัก">{navigation}</nav>
+                <div className="sidebar-scope">
+                    <h2>คลังหน่วยงาน</h2>
+                    <button className="tree sidebar-all" aria-current={tab === "files" && !scope.departmentId ? "page" : undefined} onClick={onAll}>
+                        <FolderClosed aria-hidden="true" /><span>ทุกหน่วยงาน</span>
                     </button>
-                    <span>{titles[props.tab]}</span>
-                    {props.tab !== "files" && props.tab !== "trash" && (
-                        <button className="quiet" onClick={() => act(() => props.onTab("files"))}>
-                            กลับพื้นที่เอกสาร
-                        </button>
-                    )}
-                    <span className="header-account">{props.identity.isTenantAdmin ? "ผู้ดูแลองค์กร" : "พื้นที่ทำงานของคุณ"}</span>
-                </header>
-                <div className={`app-body ${props.details ? "with-details" : ""}`}>
-                    <main id="main-content" tabIndex={-1} className="page-content">
-                        {props.children}
-                    </main>
-                    {props.details}
+                    {identity.departments.map((department) => (
+                        <DepartmentBranch key={department.id} department={department} scope={scope} api={api}
+                            folderRevision={folderRevision} onDepartment={onDepartment} onFolder={onFolder}
+                            active={tab === "files"} act={(action) => action()} />
+                    ))}
                 </div>
+                <div className="sidebar-account"><AccountMenu identity={identity} onLogout={onLogout} logoutBusy={logoutBusy} /></div>
+            </aside>
+            <div className="indigo-workspace">
+                <header className="editorial-header">
+                    <span className="header-brand"><Brand /></span>
+                    <div className="header-context">
+                        <FolderClosed aria-hidden="true" />
+                        <span>{tab === "files" ? "พื้นที่เอกสาร" : tab === "trash" ? "ถังขยะ" : "จัดการระบบ"}</span>
+                        {tab === "files" && scope.departmentId && (
+                            <><ChevronRight aria-hidden="true" /><strong>{identity.departments.find((item) => item.id === scope.departmentId)?.name}</strong></>
+                        )}
+                    </div>
+                    <AccountMenu identity={identity} onLogout={onLogout} logoutBusy={logoutBusy} />
+                </header>
+                <main id="main-content" tabIndex={-1} className="page-content">
+                    {managing && management.length > 0 && (
+                        <div className="editorial-management">
+                            <p className="editorial-management-title">จัดการระบบ</p>
+                            <nav aria-label="เมนูจัดการระบบ">
+                                {management.map((item) => (
+                                    <button key={item} aria-current={item === tab ? "page" : undefined} onClick={() => onTab(item)}>
+                                        {managementLabels[item]}
+                                    </button>
+                                ))}
+                            </nav>
+                        </div>
+                    )}
+                    {children}
+                </main>
             </div>
-            <nav className="mobile-nav" aria-label="เมนูมือถือ">
-                <button
-                    className={props.tab === "files" ? "active" : ""}
-                    aria-current={props.tab === "files" ? "page" : undefined}
-                    onClick={() => act(() => props.onTab("files"))}
-                >
-                    <Files aria-hidden="true" />
-                    ไฟล์
-                </button>
-                <button
-                    className={props.tab === "trash" ? "active" : ""}
-                    aria-current={props.tab === "trash" ? "page" : undefined}
-                    onClick={() => act(() => props.onTab("trash"))}
-                >
-                    <Trash2 aria-hidden="true" />
-                    ถังขยะ
-                </button>
-                <button
-                    className={!["files", "trash"].includes(props.tab) ? "active" : ""}
-                    aria-expanded={drawer === "more"}
-                    onClick={() => setDrawer("more")}
-                >
-                    <MoreHorizontal aria-hidden="true" />
-                    เพิ่มเติม
-                </button>
-            </nav>
-            {drawer && (
-                <DialogShell
-                    open
-                    title={drawer === "more" ? "เพิ่มเติม" : "เมนูหลัก"}
-                    size={drawer === "menu" ? "drawer" : "sheet"}
-                    dirty={false}
-                    onOpenChange={(open) => {
-                        if (!open) setDrawer(null);
-                    }}
-                >
-                    <h2>{drawer === "more" ? "เพิ่มเติม" : "EFIN DMS"}</h2>
-                    <nav aria-label={drawer === "more" ? "เมนูเพิ่มเติม" : "เมนูทั้งหมด"}>{links(drawer === "more")}</nav>
-                    <button className="secondary" onClick={() => setDrawer(null)}>
-                        ปิดเมนู
-                    </button>
-                </DialogShell>
-            )}
+            <nav className="editorial-primary mobile-primary" aria-label="เมนูหลักบนมือถือ">{navigation}</nav>
+            {details}
         </div>
     );
 }
+
+export function FolderExplorer({ api, departments, scope, revision, onDepartment, onFolder, onClose }: {
+    api: Api;
+    departments: Department[];
+    scope: Scope;
+    revision: number;
+    onDepartment: (id: string) => void;
+    onFolder: (scope: Scope) => void;
+    onClose: () => void;
+}) {
+    return (
+        <DialogShell open title="เลือกโฟลเดอร์" description="เลือกหน่วยงานหรือขยายโฟลเดอร์เพื่อดูรายการย่อย" dirty={false}
+            onOpenChange={(open) => { if (!open) onClose(); }}>
+            <h2>เลือกโฟลเดอร์</h2>
+            <div className="folder-explorer">
+                {departments.map((department) => (
+                    <DepartmentBranch key={department.id} department={department} scope={scope} api={api}
+                        folderRevision={revision} onDepartment={onDepartment} onFolder={onFolder}
+                        act={(action) => { onClose(); action(); }} />
+                ))}
+            </div>
+            <div className="dialog-actions"><DialogClose asChild><button className="secondary">ปิด</button></DialogClose></div>
+        </DialogShell>
+    );
+}
+
 function DepartmentBranch({
     department,
     scope,
-    tab,
     api,
     onDepartment,
     onFolder,
     folderRevision,
     act,
+    active = true,
 }: {
     department: Department;
     scope: Scope;
-    tab: Tab;
     api: Api;
     onDepartment: (id: string) => void;
     onFolder: (scope: Scope) => void;
     folderRevision: number;
     act: (action: () => void) => void;
+    active?: boolean;
 }) {
-    const [open, setOpen] = useState(false);
+    const [open, setOpen] = useState(scope.departmentId === department.id);
     const selectedPath = useMemo(
-        () => (tab === "files" && scope.departmentId === department.id ? scope.path.map((folder) => folder.id) : []),
-        [tab, scope.departmentId, scope.path, department.id],
+        () => (active && scope.departmentId === department.id ? scope.path.map((folder) => folder.id) : []),
+        [active, scope.departmentId, scope.path, department.id],
     );
+    useEffect(() => {
+        if (!active || scope.departmentId !== department.id) return;
+        const timer = setTimeout(() => setOpen(true), 0);
+        return () => clearTimeout(timer);
+    }, [active, scope.departmentId, department.id]);
     useEffect(() => {
         if (!selectedPath.length) return;
         const timer = setTimeout(() => setOpen(true), 0);
@@ -286,8 +233,8 @@ function DepartmentBranch({
                     {open ? <ChevronDown aria-hidden="true" /> : <ChevronRight aria-hidden="true" />}
                 </button>
                 <button
-                    className={`tree ${tab === "files" && scope.departmentId === department.id && !scope.folderId ? "active" : ""}`}
-                    aria-current={tab === "files" && scope.departmentId === department.id && !scope.folderId ? "page" : undefined}
+                    className={`tree ${active && scope.departmentId === department.id && !scope.folderId ? "active" : ""}`}
+                    aria-current={active && scope.departmentId === department.id && !scope.folderId ? "page" : undefined}
                     onClick={() => act(() => onDepartment(department.id))}
                 >
                     <Building2 aria-hidden="true" />
@@ -305,7 +252,7 @@ function DepartmentBranch({
                     parentId=""
                     ancestors={[]}
                     selectedPath={selectedPath}
-                    selected={tab === "files" && scope.departmentId === department.id ? scope.folderId : ""}
+                    selected={active && scope.departmentId === department.id ? scope.folderId : ""}
                     onSelect={(next) => act(() => onFolder(next))}
                 />
             )}

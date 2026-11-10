@@ -5,7 +5,7 @@ import { useEffect, useRef, useState, type FormEvent } from "react";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Notice } from "@/components/dms/common";
-import { RecoveryCard } from "@/components/dms/recovery-card";
+import { AuthFrame } from "@/components/dms/auth-frame";
 import { createRecoveryAuth, getBrowserAuth } from "@/lib/browser-auth";
 
 type Phase = "checking" | "confirm" | "invalid" | "password" | "revoke-error" | "done";
@@ -157,7 +157,7 @@ export default function ResetPasswordPage() {
     }
 
     return (
-        <RecoveryCard title="ตั้งรหัสผ่านใหม่">
+        <AuthFrame title="ตั้งรหัสผ่านใหม่">
             {phase === "checking" && <p role="status">กำลังเปิดลิงก์ตั้งรหัสผ่าน…</p>}
             {phase === "confirm" && (
                 <>
@@ -226,6 +226,6 @@ export default function ResetPasswordPage() {
                     </Link>
                 </>
             )}
-        </RecoveryCard>
+        </AuthFrame>
     );
 }

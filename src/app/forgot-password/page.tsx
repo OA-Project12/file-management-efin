@@ -5,7 +5,7 @@ import { useEffect, useRef, useState, type FormEvent } from "react";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Notice } from "@/components/dms/common";
-import { RecoveryCard } from "@/components/dms/recovery-card";
+import { AuthFrame } from "@/components/dms/auth-frame";
 import { createRecoveryAuth } from "@/lib/browser-auth";
 
 const resendDelay = 60_000;
@@ -53,7 +53,7 @@ export default function ForgotPasswordPage() {
     }
 
     return (
-        <RecoveryCard title="ลืมรหัสผ่าน">
+        <AuthFrame title="ลืมรหัสผ่าน">
             <p className="muted">กรอกอีเมลที่ใช้เข้าสู่ระบบเพื่อขอลิงก์ตั้งรหัสผ่านใหม่</p>
             <form onSubmit={(event) => void submit(event)}>
                 <label htmlFor="recovery-email">อีเมล</label>
@@ -76,6 +76,6 @@ export default function ForgotPasswordPage() {
                     กลับไปเข้าสู่ระบบ
                 </Link>
             </form>
-        </RecoveryCard>
+        </AuthFrame>
     );
 }

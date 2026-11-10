@@ -11,7 +11,7 @@ type DialogShellProps = {
   title: string;
   children: ReactNode;
   description?: string;
-  size?: "confirm" | "form" | "wide" | "sheet" | "drawer";
+  size?: "confirm" | "form" | "wide" | "sheet" | "drawer" | "reader";
   dirty?: boolean;
   busy?: boolean;
   initialFocus?: "cancel";
@@ -32,6 +32,7 @@ export function DialogShell({
   const [discard, setDiscard] = useState(false);
   const descriptionId = useId();
   const content = useRef<HTMLDivElement>(null);
+  const opener = useRef<HTMLElement | null>(null);
   const changed = dirty ?? touched;
   useUnsavedChanges(open && changed, open && busy);
   function requestClose(next: boolean) {
@@ -51,18 +52,25 @@ export function DialogShell({
   return (
     <Dialog.Root open={open} onOpenChange={requestClose}>
       <Dialog.Portal>
-        <Dialog.Overlay className="modal-overlay" />
+        <Dialog.Overlay className={size === "reader" ? "modal-overlay reader-overlay" : "modal-overlay"} />
         <Dialog.Content
           ref={content}
           className={`modal-content modal-${size}`}
           aria-describedby={description ? descriptionId : undefined}
           onChange={() => setTouched(true)}
           onOpenAutoFocus={(event) => {
+            opener.current = document.activeElement instanceof HTMLElement ? document.activeElement : null;
             if (initialFocus === "cancel") {
               event.preventDefault();
               content.current
                 ?.querySelector<HTMLElement>("[data-cancel],button.secondary")
                 ?.focus();
+            }
+          }}
+          onCloseAutoFocus={(event) => {
+            if (opener.current?.isConnected) {
+              event.preventDefault();
+              opener.current.focus();
             }
           }}
         >

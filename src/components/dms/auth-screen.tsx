@@ -1,9 +1,11 @@
 "use client";
 import Link from "next/link";
 import { useState, type FormEvent } from "react";
+import { Eye, EyeOff } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Notice } from "./common";
+import { AuthFrame } from "./auth-frame";
 
 export function AuthScreen({
     checking,
@@ -31,16 +33,7 @@ export function AuthScreen({
         }
     }
     return (
-        <main className="auth-page">
-            <section className="auth-card">
-                <Link className="brand" href="/" aria-label="EFIN DMS หน้าเข้าสู่ระบบ">
-                    <span className="brand-mark">E</span>
-                    <span>
-                        EFIN <strong>DMS</strong>
-                    </span>
-                </Link>
-                <h1>{checking ? "กำลังตรวจสอบการเข้าสู่ระบบ" : "เข้าสู่พื้นที่เอกสารขององค์กร"}</h1>
-                <p className="muted">ใช้บัญชีที่ผู้ดูแลเชิญเพื่อเข้าถึงเอกสารของคุณ</p>
+        <AuthFrame title={checking ? "กำลังตรวจสอบการเข้าสู่ระบบ" : "เข้าสู่ระบบ"}>
                 {checking ? (
                     <p role="status">กำลังตรวจสอบ session และสิทธิ์เข้าถึง…</p>
                 ) : (
@@ -50,6 +43,7 @@ export function AuthScreen({
                             id="login-email"
                             type="email"
                             autoComplete="email"
+                            placeholder="กรอกอีเมล"
                             value={email}
                             onChange={(e) => setEmail(e.target.value)}
                             required
@@ -61,13 +55,15 @@ export function AuthScreen({
                                 id="login-password"
                                 type={show ? "text" : "password"}
                                 autoComplete="current-password"
+                                placeholder="กรอกรหัสผ่าน"
                                 value={password}
                                 onChange={(e) => setPassword(e.target.value)}
                                 required
                                 disabled={busy}
                             />
-                            <button type="button" className="quiet" aria-pressed={show} onClick={() => setShow(!show)}>
-                                {show ? "ซ่อนรหัสผ่าน" : "แสดงรหัสผ่าน"}
+                            <button type="button" className="icon-button" aria-label={show ? "ซ่อนรหัสผ่าน" : "แสดงรหัสผ่าน"}
+                                aria-pressed={show} onClick={() => setShow(!show)}>
+                                {show ? <EyeOff aria-hidden="true" /> : <Eye aria-hidden="true" />}
                             </button>
                         </div>
                         {error && <Notice tone="danger">{error}</Notice>}
@@ -84,8 +80,6 @@ export function AuthScreen({
                         )}
                     </form>
                 )}
-                <p className="auth-footer">EFIN Document Management System</p>
-            </section>
-        </main>
+        </AuthFrame>
     );
 }

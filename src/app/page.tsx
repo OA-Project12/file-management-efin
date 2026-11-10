@@ -1,6 +1,6 @@
 "use client";
 
-import { useCallback, useRef, useState } from "react";
+import { Activity, useCallback, useRef, useState } from "react";
 import { useDmsSession } from "@/components/dms/use-dms-session";
 import { AdminUsers } from "./admin-users";
 import { AuditTrail } from "./audit-trail";
@@ -8,7 +8,7 @@ import { FolderAccess } from "./folder-access";
 import { StorageQuotas } from "./storage-quotas";
 import { ApiKeys } from "@/components/dms/api-keys";
 import { AuthScreen } from "@/components/dms/auth-screen";
-import { AppShell } from "@/components/dms/shell";
+import { AppShell, managementTabs } from "@/components/dms/shell";
 import { FilesWorkspace } from "@/components/dms/workspace";
 import { FileDetails } from "@/components/dms/details";
 import { UploadQueue } from "@/components/dms/upload-queue";
@@ -74,7 +74,10 @@ function DmsApplication() {
     const refresh = useCallback(() => setRevision((value) => value + 1), []);
     const receiveFolders = useCallback((next: Folder[]) => setFolders(next), []);
     function focusPage() {
-        requestAnimationFrame(() => document.getElementById("main-content")?.focus());
+        requestAnimationFrame(() => {
+            document.getElementById("main-content")?.focus({ preventScroll: true });
+            window.scrollTo(0, 0);
+        });
     }
     function selectScope(next: Scope) {
         navigate(() => {
@@ -158,20 +161,19 @@ function DmsApplication() {
         <AppShell
             api={api}
             identity={identity}
-            folderRevision={revision}
             scope={scope}
+            folderRevision={revision}
             tab={tab}
             details={detail}
+            onTab={changeTab}
             onAll={() => selectScope(emptyScope)}
             onDepartment={selectDepartment}
             onFolder={selectScope}
-            onTab={changeTab}
             onLogout={() => navigate(() => void submitLogout())}
             logoutBusy={logoutBusy}
-            onCreate={() => navigate(() => setCreation({ kind: "department", scope }))}
         >
             {notice && <Notice onClose={() => setNotice("")}>{notice}</Notice>}
-            {tab === "files" ? (
+            <Activity mode={tab === "files" ? "visible" : "hidden"}>
                 <FilesWorkspace
                     api={api}
                     scope={scope}
@@ -182,13 +184,17 @@ function DmsApplication() {
                     onDepartment={selectDepartment}
                     onAll={() => selectScope(emptyScope)}
                     onFolder={selectFolder}
+                    onFolderScope={selectScope}
                     onUpload={() => navigate(() => setUploadScope(scope))}
+                    onCreateDepartment={() => navigate(() => setCreation({ kind: "department", scope }))}
                     onCreateFolder={() => navigate(() => setCreation({ kind: "folder", scope }))}
                     onFolderAccess={() => navigate(() => setFolderAccess(true))}
                     onFile={openFile}
                     onFolders={receiveFolders}
+                    selectedFileId={selected?.file.id}
                 />
-            ) : tab === "trash" ? (
+            </Activity>
+            {tab === "files" ? null : tab === "trash" ? (
                 <Trash
                     writeAllowed={identity.scopes.includes("files:write")}
                     api={api}
@@ -209,7 +215,7 @@ function DmsApplication() {
                 />
             ) : tab === "audit" && identity.isTenantAdmin ? (
                 <AuditTrail api={api} />
-            ) : tab === "storage" ? (
+            ) : tab === "storage" && managementTabs(identity).includes("storage") ? (
                 <StorageQuotas api={api} />
             ) : tab === "keys" && identity.scopes.includes("keys:manage") ? (
                 <ApiKeys api={api} departments={identity.departments} onNotice={setNotice} />

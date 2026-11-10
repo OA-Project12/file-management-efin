@@ -5,6 +5,7 @@ import { useRouter } from "next/navigation";
 import { getBrowserAuth } from "@/lib/browser-auth";
 import { Input } from "@/components/ui/input";
 import { Notice } from "@/components/dms/common";
+import { AuthFrame } from "@/components/dms/auth-frame";
 import {
   NavigationGuardProvider,
   useUnsavedChanges,
@@ -90,15 +91,7 @@ function SetPassword() {
     }
   }
   return (
-    <main className="auth-page">
-      <section className="auth-card">
-        <div className="brand">
-          <span className="brand-mark">E</span>
-          <span>
-            EFIN <strong>DMS</strong>
-          </span>
-        </div>
-        <h1>ตั้งรหัสผ่าน</h1>
+    <AuthFrame title="ตั้งรหัสผ่าน">
         {phase === "checking" ? (
           <p role="status">กำลังตรวจสอบคำเชิญ…</p>
         ) : phase === "invalid" ? (
@@ -145,7 +138,6 @@ function SetPassword() {
             </button>
           </form>
         )}
-      </section>
-    </main>
+    </AuthFrame>
   );
 }

@@ -101,28 +101,33 @@ function Capacity({ item }: { item: StorageQuotaItem }) {
       </Badge>
       {finite && (
         <>
-          <div
-            className="quota-meter"
-            role="meter"
-            aria-label={`พื้นที่ใช้แล้วและจองของ ${item.departmentName}`}
-            aria-valuemin={0}
-            aria-valuemax={100}
-            aria-valuenow={usedPoints / 100 + reservePoints / 100}
-            aria-valuetext={`ใช้แล้ว ${formatQuotaBytes(item.usedBytes)} จอง ${formatQuotaBytes(item.reservedBytes)} จาก ${formatQuotaBytes(item.limitBytes)} · ${status.label}`}
-          >
-            <span
-              className="quota-used"
-              style={{ width: `${usedPoints / 100}%` }}
-            />
-            <span
-              className="quota-reserved"
-              style={{ width: `${reservePoints / 100}%` }}
-            />
+          {limit > BigInt(0) && (
+            <div
+              className="quota-meter"
+              role="meter"
+              aria-label={`พื้นที่จัดเก็บของ ${item.departmentName}`}
+              aria-valuemin={0}
+              aria-valuemax={100}
+              aria-valuenow={usedPoints / 100 + reservePoints / 100}
+              aria-valuetext={`ใช้แล้ว ${formatQuotaBytes(item.usedBytes)} จอง ${formatQuotaBytes(item.reservedBytes)} คงเหลือ ${formatQuotaBytes(item.availableBytes)} จาก ${formatQuotaBytes(item.limitBytes)} · ${status.label}`}
+            >
+              <span
+                className="quota-used"
+                style={{ width: `${usedPoints / 100}%` }}
+              />
+              <span
+                className="quota-reserved"
+                style={{ width: `${reservePoints / 100}%` }}
+              />
+            </div>
+          )}
+          <div className="quota-capacity-labels">
+            <strong>คงเหลือ {formatQuotaBytes(item.availableBytes)}</strong>
+            <small>
+              ใช้และจอง {formatQuotaBytes(item.committedBytes)} จาก{" "}
+              {formatQuotaBytes(item.limitBytes)}
+            </small>
           </div>
-          <small>
-            ใช้และจอง {formatQuotaBytes(item.committedBytes)} /{" "}
-            {formatQuotaBytes(item.limitBytes)}
-          </small>
         </>
       )}
     </div>
@@ -302,6 +307,10 @@ export function StorageQuotas({ api }: { api: Api }) {
             <span>
               <i className="quota-reserved" />
               พื้นที่จอง
+            </span>
+            <span>
+              <i className="quota-remaining" />
+              พื้นที่คงเหลือ
             </span>
           </div>
           <div className="quota-desktop">

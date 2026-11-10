@@ -1,7 +1,7 @@
 "use client";
 import { invalidateRequest } from "@/components/dms/model";
 import { useCallback, useEffect, useRef, useState } from "react";
-import { RefreshCw } from "lucide-react";
+import { Pencil, RefreshCw, UserRoundPlus, X } from "lucide-react";
 import { DialogClose, DialogShell } from "@/components/ui/dialog-shell";
 import { errorText, formatDate, isDenied } from "@/components/dms/model";
 
@@ -106,7 +106,7 @@ export function AdminUsers({ api, departments, onNotice, onInvite }: Props) {
         <div className="users-panel">
             <div className="heading">
                 <div>
-                    <h1>จัดการผู้ใช้</h1>
+                    <h1>ผู้ใช้และสิทธิ์</h1>
                     <p>สมาชิกและสิทธิ์รายหน่วยงาน</p>
                 </div>
                 <div className="actions">
@@ -114,7 +114,7 @@ export function AdminUsers({ api, departments, onNotice, onInvite }: Props) {
                         <RefreshCw aria-hidden="true" /> โหลดใหม่
                     </button>
                     <button className="primary" disabled={!inviteDepartment} onClick={() => onInvite(inviteDepartment)}>
-                        เชิญผู้ใช้
+                        <UserRoundPlus aria-hidden="true" /> เชิญผู้ใช้
                     </button>
                 </div>
             </div>
@@ -159,7 +159,11 @@ export function AdminUsers({ api, departments, onNotice, onInvite }: Props) {
                         {users.map((user) => (
                             <tr key={user.userId}>
                                 <td data-label="อีเมล">{user.email ?? user.userId}</td>
-                                <td data-label="สถานะ">{user.status === "active" ? "ใช้งาน" : "ระงับ"}</td>
+                                <td data-label="สถานะ">
+                                    <span className="member-status" data-active={user.status === "active"}>
+                                        {user.status === "active" ? "ใช้งาน" : "ระงับ"}
+                                    </span>
+                                </td>
                                 <td data-label="สิทธิ์">
                                     {user.isTenantAdmin
                                         ? "ผู้ดูแลองค์กร"
@@ -175,7 +179,8 @@ export function AdminUsers({ api, departments, onNotice, onInvite }: Props) {
                                     {user.isTenantAdmin ? (
                                         <small>จัดการผ่านช่องทางผู้ดูแลระบบ</small>
                                     ) : (
-                                        <button className="text-btn" onClick={() => choose(user)}>
+                                        <button className="secondary" onClick={() => choose(user)}>
+                                            <Pencil aria-hidden="true" />
                                             แก้สิทธิ์
                                         </button>
                                     )}
@@ -205,9 +210,18 @@ export function AdminUsers({ api, departments, onNotice, onInvite }: Props) {
                         if (!open) setSelected(null);
                     }}
                     title="แก้สิทธิ์ผู้ใช้"
+                    description="กำหนดสถานะและสิทธิ์รายหน่วยงานของสมาชิก"
+                    size="sheet"
                 >
                     <section className="users-dialog">
-                        <h2>แก้สิทธิ์ผู้ใช้</h2>
+                        <div className="member-dialog-heading">
+                            <h2>แก้สิทธิ์ผู้ใช้</h2>
+                            <DialogClose asChild>
+                                <button className="icon-button" aria-label="ปิดแผงแก้สิทธิ์" disabled={busy}>
+                                    <X aria-hidden="true" />
+                                </button>
+                            </DialogClose>
+                        </div>
                         <p>{selected.email ?? selected.userId}</p>
                         <label>
                             สถานะ{" "}
