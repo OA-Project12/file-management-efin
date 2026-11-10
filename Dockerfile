@@ -31,8 +31,21 @@ COPY --from=production-dependencies --chown=node:node /app/node_modules ./node_m
 COPY --from=build --chown=node:node /app/.next ./.next
 COPY --chown=node:node package.json package-lock.json next.config.ts ./
 COPY --chown=node:node public ./public
-# Worker/quota scripts import other scripts and the source maintenance module.
-COPY --chown=node:node scripts ./scripts
+# Railway pre-deploy check and outbox worker dependencies.
+COPY --chown=node:node \
+    scripts/check-deployment.mjs \
+    scripts/process-outbox.mjs \
+    scripts/file-purge.mjs \
+    scripts/object-cleanup.mjs \
+    scripts/quota-release.mjs \
+    scripts/worker-storage.mjs \
+    scripts/process-malware-scans.mjs \
+    scripts/malware-scan-jobs.mjs \
+    scripts/scan-storage.mjs \
+    scripts/clamd-client.mjs \
+    ./scripts/
+# Keep key creation available to operators over Railway SSH.
+COPY --chown=node:node scripts/create-application-key.mjs ./scripts/
 COPY --chown=node:node src/infrastructure/security ./src/infrastructure/security
 COPY --chown=node:node src/infrastructure/storage/storage-maintenance.mjs ./src/infrastructure/storage/storage-maintenance.mjs
 COPY --chown=node:node certs/prod-ca-2021.crt ./certs/prod-ca-2021.crt
