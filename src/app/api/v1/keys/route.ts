@@ -1,9 +1,9 @@
 import { logger } from "@/infrastructure/security/logger.mjs";
 import { auditRoute } from "@/infrastructure/audit/audit-route";
-import { createHash, randomBytes } from "node:crypto";
 import { authenticateApplicationKey } from "@/infrastructure/auth/application-key-authenticator";
 import { PostgresApplicationKeyRepository } from "@/infrastructure/database/postgres-application-key-repository";
 import { canDelegateDepartmentRole, departmentIdsForRole } from "@/application/auth/department-authorization";
+import { generateApplicationKey, parseKeyExpiryDays, presentApplicationKey } from "@/infrastructure/http/application-keys";
 
 const MAX_BODY_BYTES = 4096;
 const MANAGE_SCOPE = "keys:manage";
@@ -50,28 +50,6 @@ async function readJsonBody(request: Request): Promise<CreateKeyRequest | null> 
     }
 }
 
-function presentKey(record: {
-    id: string;
-    keyPrefix: string;
-    scopes: string[];
-    createdAt: Date;
-    expiresAt: Date | null;
-    revokedAt: Date | null;
-    lastUsedAt: Date | null;
-    departmentGrants: Array<{ id: string; code: string; name: string; role: "admin" | "editor" | "viewer" }>;
-}) {
-    return {
-        id: record.id,
-        keyPrefix: record.keyPrefix,
-        scopes: record.scopes,
-        createdAt: record.createdAt.toISOString(),
-        expiresAt: record.expiresAt?.toISOString() ?? null,
-        revokedAt: record.revokedAt?.toISOString() ?? null,
-        lastUsedAt: record.lastUsedAt?.toISOString() ?? null,
-        departmentGrants: record.departmentGrants,
-    };
-}
-
 async function handleGET(request: Request): Promise<Response> {
     try {
         const application = await authenticateApplicationKey(request);
@@ -86,7 +64,7 @@ async function handleGET(request: Request): Promise<Response> {
             departmentIdsForRole(application, "admin"),
             application.scopes.includes("departments:manage"),
         );
-        return Response.json({ data: { items: keys.map(presentKey) } }, { headers: { "Cache-Control": "no-store" } });
+        return Response.json({ data: { items: keys.map(presentApplicationKey) } }, { headers: { "Cache-Control": "no-store" } });
     } catch (error) {
         const databaseError = error as { code?: string; message?: string };
         logger.error("Could not list application keys", {
@@ -117,8 +95,8 @@ async function handlePOST(request: Request): Promise<Response> {
             return errorResponse("invalid_json", "Request body must be a JSON object.", 400);
         }
 
-        const expiresInDays = body.expiresInDays === undefined ? 90 : body.expiresInDays;
-        if (typeof expiresInDays !== "number" || !Number.isInteger(expiresInDays) || expiresInDays < 1 || expiresInDays > 365) {
+        const expiresInDays = parseKeyExpiryDays(body.expiresInDays);
+        if (expiresInDays === null) {
             return errorResponse("invalid_expiry", "expiresInDays must be an integer from 1 to 365.", 400);
         }
 
@@ -167,9 +145,7 @@ async function handlePOST(request: Request): Promise<Response> {
             return errorResponse("invalid_management_role", "keys:manage requires the Admin role in every granted department.", 400);
         }
 
-        const keyPrefix = `fsvc_${randomBytes(6).toString("hex")}`;
-        const secret = randomBytes(32).toString("base64url");
-        const secretHash = createHash("sha256").update(secret, "utf8").digest();
+        const { keyPrefix, secretHash, apiKey } = generateApplicationKey();
         const record = await new PostgresApplicationKeyRepository().createForApplication({
             auditActor: application,
             tenantId: application.tenantId,
@@ -186,8 +162,8 @@ async function handlePOST(request: Request): Promise<Response> {
         return Response.json(
             {
                 data: {
-                    ...presentKey(record),
-                    apiKey: `${keyPrefix}.${secret}`,
+                    ...presentApplicationKey(record),
+                    apiKey,
                     warning: "Copy this key now. Its secret cannot be retrieved again.",
                 },
             },

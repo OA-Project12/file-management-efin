@@ -62,6 +62,25 @@ try {
     `);
         checks.dmsSessionSchema = session.ready;
         if (!session.ready) throw Object.assign(new Error(), { code: "DMS_SESSION_SCHEMA_REQUIRED" });
+        const { rows: [rotation] } = await pool.query(`
+            select case when exists (
+                select 1 from pg_attribute
+                where attrelid = 'filesvc.application_keys'::regclass
+                  and attname = 'rotated_from_key_id' and not attisdropped
+            ) then
+                has_column_privilege(current_user, 'filesvc.application_keys', 'rotated_from_key_id', 'SELECT')
+                and has_column_privilege(current_user, 'filesvc.application_keys', 'rotated_from_key_id', 'INSERT')
+                and has_column_privilege(current_user, 'filesvc.application_keys', 'expires_at', 'UPDATE')
+                and exists (
+                    select 1 from pg_index
+                    where indrelid = 'filesvc.application_keys'::regclass
+                      and indexrelid = to_regclass('filesvc.application_keys_rotated_from_uidx')
+                      and indisunique and indisvalid
+                )
+            else false end as ready
+        `);
+        checks.keyRotationSchema = rotation.ready;
+        if (!rotation.ready) throw Object.assign(new Error(), { code: "KEY_ROTATION_SCHEMA_REQUIRED" });
     } else {
         await pool.query("select id from filesvc.outbox limit 0");
         checks.outboxReadable = true;

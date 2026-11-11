@@ -465,10 +465,11 @@ Use the `application_id` returned when creating the application. This management
 
 ## Manage application API keys
 
-All key-management endpoints require `Authorization: Bearer <MANAGEMENT_API_KEY>` with the `keys:manage` scope. A management key can list keys for its own application, issue keys with file scopes, and revoke other keys for that same application. API-issued keys cannot receive `keys:manage`; create or recover a management key from a trusted terminal.
+Key-management endpoints require `Authorization: Bearer <MANAGEMENT_API_KEY>` with the `keys:manage` scope. Management is scoped to the caller's application and department grants. Use a trusted terminal for initial setup or recovery.
 
-- `GET /api/v1/keys` — list key metadata (prefix, scopes, dates, last use, and revoke status). The secret and hash are never returned.
-- `POST /api/v1/keys` — create a key. Defaults to 90 days and `files:read`; `expiresInDays` must be 1–365 and `scopes` may contain unique `files:read` and/or `files:write` values. The secret is returned once.
+- `GET /api/v1/keys` — list key metadata, including scopes, dates, last use, revoke status and `rotatedFromKeyId`. The secret and hash are never returned.
+- `POST /api/v1/keys` — create a key. Defaults to 90 days and `files:read`. Set `departmentGrants` within the caller's authority. To issue another `keys:manage` key, every grant must be `admin`.
+- `POST /api/v1/keys/{keyId}/rotate` — replace an active file key and keep its existing scopes and department roles. Requires Admin access to every department on the key.
 - `DELETE /api/v1/keys/{keyId}` — revoke a key. A key cannot revoke itself; use a different management key to avoid locking out key administration.
 
 Example request body:
@@ -476,11 +477,23 @@ Example request body:
 ```json
 {
   "expiresInDays": 90,
-  "scopes": ["files:read", "files:write"]
+  "scopes": ["files:read", "files:write"],
+  "departmentGrants": [
+    { "departmentId": "<DEPARTMENT_UUID>", "role": "editor" }
+  ]
 }
 ```
 
 New key secrets are displayed only in the create response and cannot be retrieved later. Store them securely. All key-management responses disable caching.
+
+### Rotate a file API key
+
+1. In Postman, set `rotationKeyId` to the existing file key's ID and use the Management key as the bearer credential. Send **Rotate API key** with an empty body or `{ "expiresInDays": 90 }`. The accepted lifetime is 1–365 days (default 90). Rotation accepts active file keys with department grants and only `files:read` and/or `files:write`.
+2. Save `data.apiKey` from the `201` response in the application's secret store. The response returns the new key metadata and `data.oldKey.expiresAt`, the earlier of the old expiry and 24 hours after rotation. The old and new keys work during that overlap unless one is revoked earlier.
+3. Update every application instance. Confirm `GET /api/v1/me` and a representative application operation with the new key. Check outstanding uploads and malware scans started by the old key before revoking it using `DELETE /api/v1/keys/{keyId}`. If you suspect the old key leaked, revoke it immediately.
+4. If the response was lost, find the replacement via `rotatedFromKeyId` in **List API keys** or `error.details.replacementId` in the duplicate `409 key_already_rotated` response. If you did not save the secret, rotate the replacement and revoke the key with the unknown secret. This does not extend the original key's deadline.
+
+The rotation audit records the acting Management key, both file key IDs and expiry timestamps. Apply the key rotation migration from `db/migrations/` to the target database before deploying the new web build. The Railway web pre-deploy check verifies the schema and grants. If rolling back the web release, keep the additive migration in place. Keys already created and shortened expiry dates remain effective.
 
 ## Application key authentication
 
