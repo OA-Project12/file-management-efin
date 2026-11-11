@@ -49,3 +49,4 @@ yarn-error.log*
 next-env.d.ts
 eslint.config.mjs
 railway.variables.example
+db/migrations/
