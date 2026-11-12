@@ -20,7 +20,7 @@ type Props = {
     api: (path: string, init?: RequestInit) => Promise<unknown>;
     departments: Department[];
     onNotice: (message: string) => void;
-    onInvite: (departmentId: string) => void;
+    onInvite: () => void;
 };
 
 export function AdminUsers({ api, departments, onNotice, onInvite }: Props) {
@@ -33,7 +33,6 @@ export function AdminUsers({ api, departments, onNotice, onInvite }: Props) {
     const [loading, setLoading] = useState(false);
     const [loadError, setLoadError] = useState("");
     const [saveError, setSaveError] = useState("");
-    const [inviteDepartment, setInviteDepartment] = useState("");
     const serial = useRef(0),
         lock = useRef(false);
 
@@ -113,28 +112,11 @@ export function AdminUsers({ api, departments, onNotice, onInvite }: Props) {
                     <button className="secondary" disabled={loading} onClick={() => void load()}>
                         <RefreshCw aria-hidden="true" /> โหลดใหม่
                     </button>
-                    <button className="primary" disabled={!inviteDepartment} onClick={() => onInvite(inviteDepartment)}>
+                    <button type="button" className="primary" onClick={onInvite}>
                         <UserRoundPlus aria-hidden="true" /> เชิญผู้ใช้
                     </button>
                 </div>
             </div>
-            <label className="scope-select" htmlFor="invite-scope">
-                หน่วยงานสำหรับคำเชิญ
-                <select
-                    id="invite-scope"
-                    aria-label="หน่วยงานสำหรับคำเชิญ"
-                    value={inviteDepartment}
-                    onChange={(event) => setInviteDepartment(event.target.value)}
-                >
-                    <option value="">เลือกหน่วยงานก่อนเชิญ</option>
-                    {departments.map((department) => (
-                        <option key={department.id} value={department.id}>
-                            {department.name}
-                        </option>
-                    ))}
-                </select>
-                <small>ใช้สำหรับคำเชิญ ไม่ได้กรองรายชื่อสมาชิกด้านล่าง</small>
-            </label>
             {loadError && (
                 <div className="state-panel error-state" role="alert">
                     <h2>โหลดรายชื่อผู้ใช้ไม่สำเร็จ</h2>

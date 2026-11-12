@@ -186,7 +186,7 @@ function DmsApplication() {
                     onFolder={selectFolder}
                     onFolderScope={selectScope}
                     onUpload={() => navigate(() => setUploadScope(scope))}
-                    onCreateDepartment={() => navigate(() => setCreation({ kind: "department", scope }))}
+                    onCreateDepartment={() => navigate(() => setCreation({ kind: "department" }))}
                     onCreateFolder={() => navigate(() => setCreation({ kind: "folder", scope }))}
                     onFolderAccess={() => navigate(() => setFolderAccess(true))}
                     onFile={openFile}
@@ -211,7 +211,7 @@ function DmsApplication() {
                     api={api}
                     departments={identity.departments}
                     onNotice={setNotice}
-                    onInvite={(id) => setCreation({ kind: "invite", scope, departmentId: id })}
+                    onInvite={() => setCreation({ kind: "invite" })}
                 />
             ) : tab === "audit" && identity.isTenantAdmin ? (
                 <AuditTrail api={api} />

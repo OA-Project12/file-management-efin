@@ -5,11 +5,7 @@ import type { Api, Department, Scope, Role } from "./model";
 import { errorText } from "./model";
 import { Notice } from "./common";
 
-export type Creation = {
-    kind: "department" | "folder" | "invite";
-    scope: Scope;
-    departmentId?: string;
-};
+export type Creation = { kind: "department" | "invite" } | { kind: "folder"; scope: Scope };
 export function CreationDialog({
     value,
     api,
@@ -26,16 +22,20 @@ export function CreationDialog({
     const [name, setName] = useState(""),
         [email, setEmail] = useState(""),
         [role, setRole] = useState<Role>("viewer"),
-        [department, setDepartment] = useState(value.departmentId || value.scope.departmentId);
+        [department, setDepartment] = useState("");
     const [busy, setBusy] = useState(false),
         [error, setError] = useState("");
+    const [invalidField, setInvalidField] = useState<"department" | "email" | null>(null);
     const lock = useRef(false),
         field = useRef<HTMLInputElement>(null);
+    const departmentField = useRef<HTMLSelectElement>(null);
+    const noInviteDepartments = value.kind === "invite" && departments.length === 0;
     const title = value.kind === "department" ? "สร้างหน่วยงาน" : value.kind === "folder" ? "สร้างโฟลเดอร์" : "เชิญผู้ใช้";
     async function submit(event: FormEvent) {
         event.preventDefault();
-        if (lock.current) return;
+        if (lock.current || noInviteDepartments) return;
         setError("");
+        setInvalidField(null);
         if (
             value.kind !== "invite" &&
             (!name.trim() || name.trim().length > 120 || (value.kind === "folder" && /[\\/\u0000-\u001f\u007f]/.test(name)))
@@ -44,10 +44,17 @@ export function CreationDialog({
             field.current?.focus();
             return;
         }
-        if (value.kind === "invite" && (!department || email.trim().length > 320 || !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email.trim()))) {
-            setError("เลือกหน่วยงานและกรอกอีเมลที่ถูกต้อง");
-            field.current?.focus();
-            return;
+        if (value.kind === "invite") {
+            if (!departments.some(({ id }) => id === department)) {
+                setInvalidField("department");
+                departmentField.current?.focus();
+                return;
+            }
+            if (email.trim().length > 320 || !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email.trim())) {
+                setInvalidField("email");
+                field.current?.focus();
+                return;
+            }
         }
         lock.current = true;
         setBusy(true);
@@ -94,7 +101,7 @@ export function CreationDialog({
             open
             title={title}
             busy={busy}
-            dirty={Boolean(name || email || role !== "viewer" || department !== (value.departmentId || value.scope.departmentId))}
+            dirty={Boolean(name || email || role !== "viewer" || department)}
             onOpenChange={(open) => {
                 if (!open) onClose();
             }}
@@ -116,8 +123,15 @@ export function CreationDialog({
                                 <select
                                     id="invite-department"
                                     aria-label="หน่วยงาน"
+                                    ref={departmentField}
                                     value={department}
-                                    onChange={(e) => setDepartment(e.target.value)}
+                                    onChange={(e) => {
+                                        setDepartment(e.target.value);
+                                        if (invalidField === "department") setInvalidField(null);
+                                    }}
+                                    disabled={noInviteDepartments}
+                                    aria-invalid={invalidField === "department" || undefined}
+                                    aria-describedby={invalidField === "department" ? "invite-department-error" : undefined}
                                     required
                                 >
                                     <option value="">เลือกหน่วยงาน</option>
@@ -128,6 +142,12 @@ export function CreationDialog({
                                     ))}
                                 </select>
                             </label>
+                            {invalidField === "department" && (
+                                <div id="invite-department-error">
+                                    <Notice tone="danger">กรุณาเลือกหน่วยงาน</Notice>
+                                </div>
+                            )}
+                            {noInviteDepartments && <Notice tone="warning">ยังไม่มีหน่วยงานสำหรับส่งคำเชิญ</Notice>}
                             <label htmlFor="invite-email">
                                 อีเมลผู้ใช้
                                 <input
@@ -138,11 +158,20 @@ export function CreationDialog({
                                     autoComplete="email"
                                     maxLength={320}
                                     value={email}
-                                    onChange={(e) => setEmail(e.target.value)}
+                                    onChange={(e) => {
+                                        setEmail(e.target.value);
+                                        if (invalidField === "email") setInvalidField(null);
+                                    }}
                                     required
-                                    aria-describedby={error ? "creation-error" : undefined}
+                                    aria-invalid={invalidField === "email" || undefined}
+                                    aria-describedby={invalidField === "email" ? "invite-email-error" : undefined}
                                 />
                             </label>
+                            {invalidField === "email" && (
+                                <div id="invite-email-error">
+                                    <Notice tone="danger">กรุณากรอกอีเมลที่ถูกต้อง</Notice>
+                                </div>
+                            )}
                             <label htmlFor="invite-role">
                                 บทบาทในหน่วยงาน
                                 <select
@@ -184,7 +213,7 @@ export function CreationDialog({
                             ยกเลิก
                         </button>
                     </DialogClose>
-                    <button className="primary" disabled={busy}>
+                    <button className="primary" disabled={busy || noInviteDepartments}>
                         {busy ? "กำลังบันทึก…" : value.kind === "invite" ? "ส่งคำเชิญ" : "สร้าง"}
                     </button>
                 </div>
