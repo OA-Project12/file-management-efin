@@ -467,15 +467,17 @@ Use the `application_id` returned when creating the application. This management
 
 Key-management endpoints require `Authorization: Bearer <MANAGEMENT_API_KEY>` with the `keys:manage` scope. Management is scoped to the caller's application and department grants. Use a trusted terminal for initial setup or recovery.
 
-- `GET /api/v1/keys` — list key metadata, including scopes, dates, last use, revoke status and `rotatedFromKeyId`. The secret and hash are never returned.
-- `POST /api/v1/keys` — create a key. Defaults to 90 days and `files:read`. Set `departmentGrants` within the caller's authority. To issue another `keys:manage` key, every grant must be `admin`.
-- `POST /api/v1/keys/{keyId}/rotate` — replace an active file key and keep its existing scopes and department roles. Requires Admin access to every department on the key.
+- `GET /api/v1/keys` — list key metadata including `name`, `revision`, `scopes`, `departmentGrants`, expiry, revocation and `rotatedFromKeyId`.
+- `POST /api/v1/keys` — create a key with optional `name`. Defaults to 90 days and `files:read`. Set `departmentGrants` within the caller's authority. To issue another `keys:manage` key, every grant must be `admin`.
+- `PATCH /api/v1/keys/{keyId}` — rename an active file key or replace its department roles. The existing credential and scopes continue to apply.
+- `POST /api/v1/keys/{keyId}/rotate` — replace an active file key and copy its name, scopes and department roles. The new key starts at revision `0`. Requires Admin access to every department on the key.
 - `DELETE /api/v1/keys/{keyId}` — revoke a key. A key cannot revoke itself; use a different management key to avoid locking out key administration.
 
 Example request body:
 
 ```json
 {
+  "name": "ระบบบัญชี BA",
   "expiresInDays": 90,
   "scopes": ["files:read", "files:write"],
   "departmentGrants": [
@@ -485,6 +487,26 @@ Example request body:
 ```
 
 New key secrets are displayed only in the create response and cannot be retrieved later. Store them securely. All key-management responses disable caching.
+
+### Update a file API key
+
+In Postman, set `updateKeyId` to the file key UUID and use a Management key as the Bearer credential. Run **List API keys** to populate `keyExpectedRevision` and review the current grants. Then use **Update API key** with a body such as:
+
+```json
+{
+  "expectedRevision": 0,
+  "name": "ระบบบัญชี BA",
+  "departmentGrants": [
+    { "departmentId": "<BA_DEPARTMENT_UUID>", "role": "editor" }
+  ]
+}
+```
+
+- `departmentGrants` replaces the full list with 1–100 unique active departments. Include every department you want to retain. Use Revoke to remove the final grant by disabling the key. A Management key with `departments:manage` can assign the first grant to a key created by the CLI. A department-scoped Management key must have `admin` in every current and requested department. A Viewer-to-Editor change only grants file writes when the key already has `files:write`.
+- For a rename, omit `departmentGrants`. Set `name` to `null` to clear it, or supply a label of 1–100 characters after trimming. Use an integration name and keep credentials out of the label. Existing keys start with `name: null` and `revision: 0`.
+- A `200` response includes the current name, revision and department grants. A real change increments the revision and records `key.update` in Audit. Grant snapshots group department IDs by role and omit UUID hyphens to fit the Audit size limit. A no-op returns the current revision. Verify the updated roles with `GET /api/v1/me` using the file key.
+- On `409 key_revision_conflict`, refresh the list and review changes before sending a new PATCH. On `409 key_rotation_overlap`, change roles on the latest replacement after every earlier active key has expired or been revoked. `409 key_not_editable` covers expired, revoked and management keys within the caller's scope. A target outside the caller's scope returns `404`. A requested department outside the caller's authority returns `403`.
+- Apply the [Rotate migration](db/migrations/20261110093652_application_key_rotation.sql) if it is absent, then apply the [metadata and roles migration](db/migrations/20261116051020_application_key_metadata_and_roles.sql) to the test database before deploying the web build. The pre-deploy check verifies both migrations and the API privileges. Repeat on Production when releasing. An application rollback can keep the additive columns and stored metadata.
 
 ### Rotate a file API key
 

@@ -3,13 +3,13 @@ import { auditRoute } from "@/infrastructure/audit/audit-route";
 import { authenticateApplicationKey } from "@/infrastructure/auth/application-key-authenticator";
 import { PostgresApplicationKeyRepository } from "@/infrastructure/database/postgres-application-key-repository";
 import { canDelegateDepartmentRole, departmentIdsForRole } from "@/application/auth/department-authorization";
-import { generateApplicationKey, parseKeyExpiryDays, presentApplicationKey } from "@/infrastructure/http/application-keys";
+import { generateApplicationKey, parseKeyExpiryDays, parseKeyName, presentApplicationKey } from "@/infrastructure/http/application-keys";
 
-const MAX_BODY_BYTES = 4096;
 const MANAGE_SCOPE = "keys:manage";
 const CREATABLE_SCOPES = new Set(["files:read", "files:write", "keys:manage"]);
 
 interface CreateKeyRequest {
+    name?: unknown;
     expiresInDays?: unknown;
     scopes?: unknown;
     departmentGrants?: unknown;
@@ -23,31 +23,6 @@ function errorResponse(code: string, message: string, status: number): Response 
             headers: { "Cache-Control": "no-store" },
         },
     );
-}
-
-async function readJsonBody(request: Request): Promise<CreateKeyRequest | null> {
-    if (!request.body) return null;
-    const reader = request.body.getReader();
-    const chunks: Uint8Array[] = [];
-    let size = 0;
-
-    while (true) {
-        const { done, value } = await reader.read();
-        if (done) break;
-        size += value.byteLength;
-        if (size > MAX_BODY_BYTES) {
-            await reader.cancel();
-            throw new RangeError("request_body_too_large");
-        }
-        chunks.push(value);
-    }
-
-    try {
-        const value: unknown = JSON.parse(Buffer.concat(chunks).toString("utf8"));
-        return value && typeof value === "object" && !Array.isArray(value) ? (value as CreateKeyRequest) : null;
-    } catch {
-        return null;
-    }
 }
 
 async function handleGET(request: Request): Promise<Response> {
@@ -83,17 +58,13 @@ async function handlePOST(request: Request): Promise<Response> {
             return errorResponse("forbidden", "The API key does not have keys:manage scope.", 403);
         }
 
-        let body: CreateKeyRequest;
-        try {
-            const parsed = await readJsonBody(request);
-            if (!parsed) throw new Error("invalid_json");
-            body = parsed;
-        } catch (error) {
-            if (error instanceof RangeError) {
-                return errorResponse("request_too_large", "Request body is too large.", 413);
-            }
+        const parsed: unknown = await request.json().catch(() => null);
+        if (!parsed || typeof parsed !== "object" || Array.isArray(parsed)) {
             return errorResponse("invalid_json", "Request body must be a JSON object.", 400);
         }
+        const body = parsed as CreateKeyRequest;
+        const name = parseKeyName(body.name === undefined ? null : body.name);
+        if (name === undefined) return errorResponse("invalid_key_name", "Use a name of 1 to 100 characters without credentials, or null.", 400);
 
         const expiresInDays = parseKeyExpiryDays(body.expiresInDays);
         if (expiresInDays === null) {
@@ -152,6 +123,7 @@ async function handlePOST(request: Request): Promise<Response> {
             applicationId: application.applicationId,
             keyPrefix,
             secretHash,
+            name,
             scopes,
             expiresInDays,
             departmentGrants,

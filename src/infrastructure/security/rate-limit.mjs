@@ -29,7 +29,7 @@ export function policyFor(path, method) {
     if (/\/upload-intents(?:\/batch)?$/.test(path)) return "uploads";
     if (/\/versions\/[^/]+\/restore$/.test(path) || path.endsWith("/purge")) return "destructive";
     if (path.endsWith("/users/invite")) return "invites";
-    if (/\/keys(?:\/[^/]+)?$/.test(path) && ["POST", "DELETE"].includes(method)) return "keys";
+    if (/\/keys(?:\/[^/]+)?\/?$/.test(path) && ["POST", "PATCH", "DELETE"].includes(method)) return "keys";
     if (method === "POST" && /\/keys\/[^/]+\/rotate\/?$/.test(path)) return "keys";
 }
 // Redis TIME and a single script provide a common clock and atomic multi-bucket admission.

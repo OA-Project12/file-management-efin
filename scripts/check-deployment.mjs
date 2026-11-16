@@ -81,6 +81,24 @@ try {
         `);
         checks.keyRotationSchema = rotation.ready;
         if (!rotation.ready) throw Object.assign(new Error(), { code: "KEY_ROTATION_SCHEMA_REQUIRED" });
+        const { rows: [lifecycle] } = await pool.query(`
+            select case when (
+                select count(*) from pg_attribute
+                where attrelid = 'filesvc.application_keys'::regclass
+                  and attname in ('name', 'revision') and not attisdropped
+            ) = 2 then
+                has_column_privilege(current_user, 'filesvc.application_keys', 'name', 'SELECT')
+                and has_column_privilege(current_user, 'filesvc.application_keys', 'name', 'INSERT')
+                and has_column_privilege(current_user, 'filesvc.application_keys', 'name', 'UPDATE')
+                and has_column_privilege(current_user, 'filesvc.application_keys', 'revision', 'SELECT')
+                and has_column_privilege(current_user, 'filesvc.application_keys', 'revision', 'UPDATE')
+                and has_table_privilege(current_user, 'filesvc.application_key_departments', 'SELECT')
+                and has_table_privilege(current_user, 'filesvc.application_key_departments', 'INSERT')
+                and has_table_privilege(current_user, 'filesvc.application_key_departments', 'DELETE')
+            else false end as ready
+        `);
+        checks.keyLifecycleSchema = lifecycle.ready;
+        if (!lifecycle.ready) throw Object.assign(new Error(), { code: "KEY_LIFECYCLE_SCHEMA_REQUIRED" });
     } else {
         await pool.query("select id from filesvc.outbox limit 0");
         checks.outboxReadable = true;
