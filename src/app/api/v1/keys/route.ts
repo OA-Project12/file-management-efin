@@ -33,11 +33,18 @@ async function handleGET(request: Request): Promise<Response> {
             return errorResponse("forbidden", "The API key does not have keys:manage scope.", 403);
         }
 
+        const statuses = new URL(request.url).searchParams.getAll("status");
+        const status = statuses[0] ?? null;
+        if (statuses.length > 1 || (status !== null && status !== "active" && status !== "expired" && status !== "revoked")) {
+            return errorResponse("invalid_key_status", "status must be active, expired, or revoked.", 400);
+        }
+
         const keys = await new PostgresApplicationKeyRepository().listForApplication(
             application.tenantId,
             application.applicationId,
             departmentIdsForRole(application, "admin"),
             application.scopes.includes("departments:manage"),
+            status,
         );
         return Response.json({ data: { items: keys.map(presentApplicationKey) } }, { headers: { "Cache-Control": "no-store" } });
     } catch (error) {

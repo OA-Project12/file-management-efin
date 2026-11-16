@@ -131,6 +131,7 @@ export class PostgresApplicationKeyRepository {
         applicationId: string,
         departmentIds: string[],
         isApplicationAdmin: boolean,
+        status: "active" | "expired" | "revoked" | null,
     ): Promise<ApplicationKeyRecord[]> {
         const result = await getDatabasePool().query<ApplicationKeyRow>(
             `
@@ -142,6 +143,12 @@ export class PostgresApplicationKeyRepository {
         left join filesvc.application_key_departments kd on kd.application_key_id = k.id
         left join filesvc.departments d on d.id = kd.department_id
         where k.tenant_id = $1 and k.application_id = $2
+          and (
+            $5::text is null
+            or ($5 = 'active' and k.revoked_at is null and (k.expires_at is null or k.expires_at > now()))
+            or ($5 = 'expired' and k.revoked_at is null and k.expires_at <= now())
+            or ($5 = 'revoked' and k.revoked_at is not null)
+          )
           and (
             $4::boolean or (
               exists (
@@ -157,7 +164,7 @@ export class PostgresApplicationKeyRepository {
         group by k.id
         order by k.created_at desc, k.id desc
       `,
-            [tenantId, applicationId, departmentIds, isApplicationAdmin],
+            [tenantId, applicationId, departmentIds, isApplicationAdmin, status],
         );
 
         return result.rows.map(mapKey);
