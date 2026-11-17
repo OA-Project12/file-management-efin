@@ -1,61 +1,61 @@
-# File Storage API
+# API จัดเก็บไฟล์ EFIN DMS
 
-## ตรวจประเภทไฟล์จาก bytes — signature-v1
+## ตรวจชนิดไฟล์จากไบต์แรก — signature-v1
 
-การตรวจชนิดเป็นขั้นก่อนเข้าคิว Malware scanning เมื่อผ่านการตรวจขนาดและชนิดแล้ว `complete` จึงตอบ `202 pending_scan`
+ระบบตรวจขนาดและชนิดไฟล์ก่อนส่งเข้าคิวสแกนมัลแวร์ เมื่อผ่านแล้ว `complete` จะตอบ `202 pending_scan`
 
-Upload ใหม่และ version ใหม่รับเฉพาะ PDF (`.pdf`, `application/pdf`), JPEG (`.jpg`/`.jpeg`, `image/jpeg`) และ PNG (`.png`, `image/png`) นามสกุลและ MIME ไม่สนตัวพิมพ์ใหญ่เล็ก แต่ต้องตรงกับ signature และ Storage MIME ทั้งหมด ใช้ `originalName` ของฉบับ ไม่ใช้ display name; API clients ต้องส่ง MIME ที่ตรง ไม่รับ `application/octet-stream` ส่วน UI อนุมาน MIME จากนามสกุลเมื่อ browser ส่ง `File.type` ว่างเท่านั้น ทั้ง intent และ PUT ใช้ค่าเดียวกัน
+ไฟล์และเวอร์ชันที่อัปโหลดใหม่ต้องเป็น PDF (`.pdf`, `application/pdf`), JPEG (`.jpg`/`.jpeg`, `image/jpeg`) หรือ PNG (`.png`, `image/png`) ระบบเปรียบเทียบนามสกุลและ MIME โดยไม่แยกตัวพิมพ์ใหญ่เล็ก และตรวจให้ตรงกับลายเซ็นไฟล์และ MIME ใน Storage โดยใช้ `originalName` ของเวอร์ชันนั้นแทนชื่อแสดงผล ผู้เรียก API ต้องส่ง MIME ที่ตรงกับชนิดไฟล์ ระบบปฏิเสธ `application/octet-stream` หน้าเว็บอนุมาน MIME จากนามสกุลเฉพาะเมื่อเบราว์เซอร์ส่ง `File.type` ว่าง และใช้ค่าเดียวกันเมื่อขออัปโหลดและส่ง `PUT`
 
-Flow เดิม: สร้าง intent → PUT ตรง Storage → complete. Intent ปฏิเสธนามสกุล/MIME ที่ไม่รองรับก่อน grant/reservation; batch แยกผลรายไฟล์ Complete อ่าน prefix ไม่เกิน 1,024 bytes จาก private Storage ฝั่ง server (deadline 15 วินาที), ตรวจ metadata ก่อน/หลังและใช้ If-Match เมื่อมี ETag ก่อนเข้าคิวสแกน PDF ตรวจ `%PDF-`, JPEG ตรวจ `FF D8 FF`, PNG ตรวจ signature 8 bytes เท่านั้น **ไม่ใช่ parser ตรวจโครงสร้าง/ไฟล์เสีย และไม่ใช่ผลสแกนไวรัสหรือรับรองความปลอดภัย** ไฟล์ที่สร้าง signature ปลอม หรือ PDF ที่มี active content อาจผ่านชั้นนี้ได้; malware scanning และ preview hardening เป็นงานแยก
+ขั้นตอนอัปโหลดเริ่มจากขอสิทธิ์ ส่ง `PUT` ตรงไปยัง Storage แล้วเรียกยืนยัน คำขอเริ่มอัปโหลดจะปฏิเสธนามสกุลหรือ MIME ที่ไม่รองรับก่อนออกสิทธิ์และจองพื้นที่ หากส่งเป็นชุดจะคืนผลแยกตามไฟล์ ขั้นตอนยืนยันอ่านไบต์แรกจาก Storage ส่วนตัวผ่านเซิร์ฟเวอร์ไม่เกิน 1,024 ไบต์ภายใน 15 วินาที ตรวจข้อมูลกำกับก่อนและหลังอ่าน และใช้ `If-Match` เมื่อมี `ETag` สำหรับ PDF ตรวจ `%PDF-` สำหรับ JPEG ตรวจ `FF D8 FF` และสำหรับ PNG ตรวจลายเซ็น 8 ไบต์ การตรวจนี้ครอบคลุมเฉพาะลายเซ็น จึงอาจยอมรับไฟล์ที่ปลอมลายเซ็นหรือ PDF ที่มีเนื้อหาทำงานได้ การตรวจโครงสร้างหรือไฟล์เสีย การสแกนไวรัส และการป้องกันขณะดูตัวอย่างเป็นงานคนละส่วน
 
-| Error code | HTTP | ความหมาย |
+| รหัสข้อผิดพลาด | HTTP | ความหมาย |
 |---|---|---|
 | `file_type_not_allowed` | 415 | นามสกุลหรือ MIME ไม่รองรับ |
-| `file_signature_invalid` | 415 | ว่าง, signature สั้นหรือไม่รู้จัก |
-| `file_type_mismatch` | 415 | เนื้อหาไม่ตรงกับนามสกุล/declared MIME/Storage MIME |
-| `file_validation_unavailable` | 503 | Storage/stream/timeout ยังตรวจไม่ได้ คง pending และเรียก complete ใหม่ได้ภายในอายุ intent |
-| `object_changed` | 409 | Metadata/ETag/version เปลี่ยนระหว่างตรวจ |
+| `file_signature_invalid` | 415 | ไฟล์ว่าง หรือลายเซ็นไฟล์สั้นหรือไม่รู้จัก |
+| `file_type_mismatch` | 415 | เนื้อหาไม่ตรงกับนามสกุล MIME ที่ระบุ หรือ MIME ใน Storage |
+| `file_validation_unavailable` | 503 | อ่านจาก Storage ไม่ได้หรือหมดเวลา งานยังรอตรวจและเรียกยืนยันใหม่ได้ก่อนสิทธิ์อัปโหลดหมดอายุ |
+| `object_changed` | 409 | ข้อมูลกำกับ `ETag` หรือเวอร์ชันเปลี่ยนระหว่างตรวจ |
 
-Upload ที่ตรวจไม่ผ่านเป็น `quarantined` พร้อม Audit และ quota settlement ใน transaction เดียว ไม่ publish และไม่แทน current version ไม่ลบ object ทันทีระหว่าง signed upload grant ยังใช้ได้ ใช้ cleanup เดิมหลังหมดอายุพร้อม grace period และคืนโควตาเมื่อ worker ยืนยันการลบเท่านั้น ความล้มเหลวของการอ่านไม่ถือว่าไฟล์ผิดประเภทและไม่ retry mutation อัตโนมัติ
+เมื่อไฟล์อัปโหลดตรวจไม่ผ่าน ระบบตั้งสถานะเป็น `quarantined` บันทึกประวัติ และปรับยอดโควตาในธุรกรรมเดียวกัน ไฟล์ที่ถูกกักจะยังเปิดใช้หรือแทนที่เวอร์ชันปัจจุบันไม่ได้ ระบบเก็บกวาดหลังสิทธิ์อัปโหลดหมดอายุและพ้นช่วงผ่อนผัน และคืนโควตาเมื่อ worker ยืนยันการลบ หากอ่านไฟล์ไม่สำเร็จ ระบบยังไม่ตัดสินว่าไฟล์ผิดชนิดและจะไม่ส่งคำขอแก้ข้อมูลซ้ำโดยอัตโนมัติ
 
-ไฟล์เดิมยังค้นหา/preview/download ตามสิทธิ์และรูปแบบเดิม ไม่มี backfill หรือสแกนย้อนหลัง Complete ที่เสร็จแล้วเป็น idempotent การ restore จากถังขยะต้องตรวจฉบับปัจจุบันก่อน; restore เวอร์ชันตรวจทั้งต้นฉบับและสำเนาก่อน publish หากไม่ผ่านเก็บฉบับปัจจุบันเดิมไว้ ไม่เปลี่ยน bucket MIME allowlist, schema, endpoint หรือ scope และไม่มี deployment ในงานนี้
+ไฟล์เดิมยังค้นหา ดูตัวอย่าง และดาวน์โหลดได้ตามสิทธิ์เดิม โดยไม่มีการเติมข้อมูลย้อนหลังหรือสแกนไฟล์ย้อนหลัง การยืนยันงานที่เสร็จแล้วซ้ำให้ผลเดิม เมื่อกู้จากถังขยะ ระบบจะตรวจเวอร์ชันปัจจุบันก่อน ส่วนการคืนเวอร์ชันจะตรวจต้นฉบับและสำเนาก่อนเปิดใช้ หากไม่ผ่านจะคงเวอร์ชันปัจจุบันไว้ รุ่นนี้คงรายการ MIME ที่ bucket รองรับ โครงสร้างฐานข้อมูล เส้นทาง API และขอบเขตสิทธิ์เดิม และไม่มีการติดตั้งรุ่นนี้ในงานดังกล่าว
 
-ผลตรวจในเครื่องเมื่อเพิ่มการตรวจชนิดไฟล์ผ่าน backend/security 35 กรณี, browser security/upload 5 กรณี, TypeScript, lint และ webpack production build รวมกรณี worker ต้องลองลบ object ใหม่ก่อนคืนพื้นที่ ตัวเลขนี้เป็นผลจากชุดทดสอบเดิม
+ผลจากชุดทดสอบเดิมในเครื่องผ่านการตรวจฝั่งเซิร์ฟเวอร์และความปลอดภัย 35 กรณี และการตรวจความปลอดภัยกับการอัปโหลดบนเบราว์เซอร์ 5 กรณี รวมถึง TypeScript, lint และการสร้างรุ่นใช้งานจริงด้วย webpack ครอบคลุมกรณีที่ worker ต้องลองลบวัตถุอีกครั้งก่อนคืนพื้นที่
 
-### Security release preparation — 4 พฤศจิกายน 2569
+### เตรียมปล่อยรุ่นความปลอดภัย วันที่ 4 พฤศจิกายน 2569
 
-The release preflight passed 18 security tests against disposable PostgreSQL/Redis, 4 browser security tests against a local production build using mocked services, TypeScript, lint and webpack production build. It covered the wrapped Next.js Request regression that previously returned 503 for JSON POST requests.
+การตรวจสอบก่อนปล่อยรุ่นผ่านชุดความปลอดภัย 18 กรณีด้วย PostgreSQL และ Redis ชั่วคราว และการตรวจความปลอดภัยบนเบราว์เซอร์ 4 กรณีด้วยรุ่นใช้งานจริงในเครื่องและบริการจำลอง รวมถึง TypeScript, lint และการสร้างรุ่นด้วย webpack การตรวจครอบคลุมข้อผิดพลาดจาก `Request` ที่ Next.js ห่อไว้ ซึ่งเคยทำให้คำขอ POST แบบ JSON ได้รหัส 503
 
-Deploy web first and worker second from the same clean release commit using Railway CLI and their existing service-specific configuration paths. Keep `RATE_LIMIT_MODE=report`; this counts/reports excess requests but does not block them. Verify Redis from inside the deployed web container with a PING, independently of report-mode readiness. Record release/deployment IDs and the previous deployment IDs in an operator report without credentials. Do not enable enforce until the team confirms normal flows, ingress IP handling and limits. No schema migration or quota apply is part of this release.
+ติดตั้งเว็บก่อน worker ด้วย Railway CLI จากคอมมิตเดียวกันที่ไม่มีไฟล์ค้างแก้ ใช้พาธการตั้งค่าเดิมของแต่ละบริการ คง `RATE_LIMIT_MODE=report` เพื่อนับและรายงานคำขอเกินเพดาน คำขอเหล่านั้นยังได้รับอนุญาต ให้ตรวจ Redis ด้วย `PING` จากในคอนเทนเนอร์เว็บที่ติดตั้งแล้วแยกจากการตรวจความพร้อมในโหมดรายงาน บันทึก ID ของรุ่น การติดตั้งครั้งนี้ และการติดตั้งก่อนหน้าในรายงานของผู้ปฏิบัติงานโดยไม่เก็บข้อมูลรับรอง เปิดโหมดบังคับใช้หลังทีมยืนยันการใช้งานปกติ การอ่าน IP ขาเข้า และเพดานคำขอ รอบนี้ไม่มีการเปลี่ยนโครงสร้างฐานข้อมูลหรือนำผลคำนวณโควตาไปบันทึก
 
-## Malware scanning และ Quarantine
+## การสแกนมัลแวร์และกักไฟล์
 
-1. สร้าง intent และ PUT ไปยัง private Supabase Storage เหมือนเดิม ส่ง `folderId` ใน intent เมื่อต้องการอัปโหลดเข้าที่ปลายทางโดยตรง
-2. เรียก `POST /api/v1/files/{fileId}/complete` หรือ `POST /api/v1/files/{fileId}/versions/{versionId}/complete` เมื่อ PUT สำเร็จ การกู้คืนใช้ `POST /api/v1/files/{fileId}/restore` และ `POST /api/v1/files/{fileId}/versions/{versionId}/restore` ตามเดิม
-3. HTTP `202` คืน `{ "data": { "fileId": "...", "scanId": "...", "status": "pending_scan", "statusUrl": "/api/v1/files/.../scan-jobs/..." } }` และมี `versionId` สำหรับงานระดับเวอร์ชัน เรียก GET ที่ `statusUrl` ด้วย identity ที่มี `files:write` และสิทธิ์ Editor ขึ้นไปในขอบเขตเดิม ผู้ใช้ API key ต้องแนบ `?ownerSubject=<เจ้าของไฟล์>` แบบ URL-encoded
-4. อ่าน `data.status` ซึ่งเป็น `pending_scan`, `scanning`, `available`, `quarantined` หรือ `scan_failed` เมื่อพบสถานะสุดท้ายสามแบบให้หยุด polling การเรียก complete ซ้ำคืน scan ID เดิม โดยตอบ 200 เมื่องานจบแล้ว ไฟล์ที่เสร็จก่อน release นี้อาจคืน 200 พร้อม `available` โดยไม่มี scan ID
+1. สร้างคำขอเริ่มอัปโหลดและส่ง `PUT` ไปยัง Supabase Storage ส่วนตัว ส่ง `folderId` ในคำขอเมื่อต้องการอัปโหลดเข้าโฟลเดอร์ปลายทางโดยตรง
+2. เรียก `POST /api/v1/files/{fileId}/complete` หรือ `POST /api/v1/files/{fileId}/versions/{versionId}/complete` เมื่อส่ง `PUT` สำเร็จ การกู้คืนใช้ `POST /api/v1/files/{fileId}/restore` และ `POST /api/v1/files/{fileId}/versions/{versionId}/restore`
+3. HTTP `202` คืน `{ "data": { "fileId": "...", "scanId": "...", "status": "pending_scan", "statusUrl": "/api/v1/files/.../scan-jobs/..." } }` พร้อม `versionId` สำหรับงานระดับเวอร์ชัน ให้เรียก GET ที่ `statusUrl` ด้วยบัญชีหรือคีย์ที่มี `files:write` และบทบาท Editor ขึ้นไปในขอบเขตเดิม ผู้เรียกด้วย API key ต้องแนบ `?ownerSubject=<เจ้าของไฟล์>` โดยเข้ารหัสสำหรับ URL
+4. `data.status` เป็น `pending_scan`, `scanning`, `available`, `quarantined` หรือ `scan_failed` ให้หยุดตรวจซ้ำเมื่อถึงสถานะสุดท้ายสามแบบ การเรียกยืนยันซ้ำจะคืน ID งานสแกนเดิม โดยตอบ 200 เมื่องานจบแล้ว ไฟล์ที่ยืนยันเสร็จก่อนรุ่นนี้อาจตอบ 200 พร้อม `available` และไม่มี ID งานสแกน
 
-ไฟล์ใหม่ออก preview/download URL ได้หลัง `available` ฉบับปัจจุบันยังใช้ได้ระหว่างสแกนฉบับใหม่ ไฟล์เดิมอ่านได้ตามสิทธิ์เดิมและไม่มีการสแกนย้อนหลังอัตโนมัติ หากพบภัยระหว่าง restore ระบบปิดการออก URL ใหม่ของ object นั้น ส่วนลิงก์ที่ออกไปก่อนหน้าอาจใช้ได้ถึงเวลาหมดอายุหรือจน object ถูกลบ พื้นที่ยังถูกคิดจน worker ยืนยันว่า object ถูกลบหรือไม่มีอยู่แล้ว ดู [Supabase signed URL behavior](https://supabase.com/docs/guides/storage/serving/downloads#revoke-signed-urls)
+ขอ URL ดูตัวอย่างหรือดาวน์โหลดไฟล์ใหม่ได้เมื่อเป็น `available` ฉบับปัจจุบันยังใช้ได้ระหว่างสแกนฉบับใหม่ ระบบคงสิทธิ์อ่านไฟล์เดิมและไม่สแกนย้อนหลังอัตโนมัติ หากพบภัยระหว่างกู้คืน ระบบหยุดออก URL ใหม่ของวัตถุนั้น ลิงก์ที่ออกไปแล้วอาจใช้ได้จนหมดอายุหรือจนวัตถุถูกลบ ระบบจะยังคิดพื้นที่จน worker ยืนยันว่าลบแล้วหรือวัตถุไม่มีอยู่ ดู [พฤติกรรมของลิงก์ที่ลงลายเซ็นใน Supabase](https://supabase.com/docs/guides/storage/serving/downloads#revoke-signed-urls)
 
-ClamAV ตรวจได้ตามลายเซ็นและขีดจำกัดของ engine PDF เข้ารหัสหรือไฟล์ที่เกินขีดจำกัดถูกระบุว่าตรวจไม่ได้ การตรวจไม่ผ่านชั่วคราวลองสูงสุด 5 ครั้ง ภายใน 2 ชั่วโมง ไฟล์ใหม่ที่จบโดยเปิดใช้ไม่ได้เข้า cleanup หลัง upload grant หมดอายุและผ่าน grace 1 ชั่วโมง ต้นฉบับเดิมยังอยู่หาก scanner ขัดข้องหรือตรวจไม่ได้
+ClamAV ตรวจตามฐานลายเซ็นและขีดจำกัดของเครื่องสแกน PDF ที่เข้ารหัสหรือไฟล์เกินขีดจำกัดจะอยู่ในกลุ่มตรวจไม่ได้ หากเกิดปัญหาชั่วคราว ระบบลองสูงสุด 5 ครั้งใน 2 ชั่วโมง ไฟล์ใหม่ที่เปิดใช้ไม่ได้จะถูกเก็บกวาดหลังสิทธิ์อัปโหลดหมดอายุและพ้นช่วงผ่อนผัน 1 ชั่วโมง หากเครื่องสแกนขัดข้องหรือตรวจไม่ได้ ระบบจะคงต้นฉบับเดิมไว้
 
 ### เปิดใช้บน Railway
 
-1. นำ migration `db/migrations/20261105_malware_scan.sql` ไปใช้ผ่านผู้ดูแล schema หลังตรวจ migration เดิมของ versioning, folder access, quota และ cleanup ให้ครบ ตรวจว่า `filesvc_api` และ `filesvc_worker` เป็นคนละ role, schema `filesvc` ไม่เปิดผ่าน Data API และ Storage policies ไม่อนุญาตให้ `anon` หรือ `authenticated` อ่านไฟล์ตรงจาก bucket นี้
-2. สร้าง service `efin-dms-clamav` จาก Dockerfile ใน `deploy/clamav` ใช้ RAM เริ่มต้น 4 GiB และ mount volume ที่ `/var/lib/clamav` เพื่อเก็บฐานลายเซ็น ให้ FreshClam อัปเดตได้และใช้ private networking พอร์ต 3310 โดยไม่สร้าง public domain หรือ TCP proxy Service นี้ใช้เฉพาะ ClamAV config และไม่มี DB หรือ Supabase credentials ดู [ClamAV Docker](https://docs.clamav.net/manual/Installing/Docker.html) และ [Railway private networking](https://docs.railway.com/networking/private-networking)
-3. ใช้ web และ worker release เดียวกัน ตั้ง `MALWARE_SCAN_MODE=paused` ทั้งสอง service ก่อนตั้งค่า `CLAMD_HOST=efin-dms-clamav.railway.internal` และ `CLAMD_PORT=3310` ให้ worker ตรวจ `VERSION` และทดสอบ `INSTREAM` ด้วยข้อมูลจำลองในสภาพแวดล้อมทดสอบ ตรวจ bucket และ `MAX_UPLOAD_SIZE_BYTES` ให้สอดคล้องกับเพดาน ClamAV 25 MiB
-4. หลัง worker เข้าถึง clamd และฐานลายเซ็นที่โหลดมีอายุไม่เกิน 72 ชั่วโมง ให้เปลี่ยน worker เป็น `required` ก่อนเปิด web เป็น `required` ตรวจผล clean/infected, สิทธิ์การอ่าน และการคืนพื้นที่โดยใช้ข้อมูลทดสอบ
-5. ติดตาม `Malware scan queue` ซึ่งรายงานจำนวนงานและอายุงานเก่าสุดเป็นมิลลิวินาที รวมถึง `Malware scan retry scheduled`, `Malware scan failed`, `scanner_signatures_stale` และ `Malware cleanup deferred` ใน worker logs
+1. ให้ผู้ดูแลฐานข้อมูลรัน `db/migrations/20261105_malware_scan.sql` หลังตรวจว่ารันสคริปต์เดิมสำหรับเวอร์ชันไฟล์ สิทธิ์โฟลเดอร์ โควตา และงานเก็บกวาดครบแล้ว ตรวจว่า `filesvc_api` และ `filesvc_worker` เป็นคนละบทบาท โครงสร้าง `filesvc` ไม่เปิดผ่าน Data API และนโยบาย Storage ไม่ให้ `anon` หรือ `authenticated` อ่านไฟล์ตรงจาก bucket นี้
+2. สร้างบริการ `efin-dms-clamav` จาก Dockerfile ใน `deploy/clamav` ใช้ RAM เริ่มต้น 4 GiB และต่อพื้นที่จัดเก็บที่ `/var/lib/clamav` เพื่อเก็บฐานลายเซ็น ให้ FreshClam อัปเดตได้ ใช้เครือข่ายส่วนตัวพอร์ต 3310 และงดสร้างโดเมนสาธารณะหรือ TCP proxy บริการนี้ต้องใช้เฉพาะค่าตั้ง ClamAV โดยไม่มีข้อมูลรับรองฐานข้อมูลหรือ Supabase ดู [ClamAV บน Docker](https://docs.clamav.net/manual/Installing/Docker.html) และ [เครือข่ายส่วนตัวของ Railway](https://docs.railway.com/networking/private-networking)
+3. ใช้เว็บและ worker รุ่นเดียวกัน ตั้ง `MALWARE_SCAN_MODE=paused` ให้ทั้งสองบริการ แล้วตั้ง `CLAMD_HOST=efin-dms-clamav.railway.internal` และ `CLAMD_PORT=3310` ให้ worker ตรวจ `VERSION` และทดสอบ `INSTREAM` ด้วยข้อมูลจำลองในสภาพแวดล้อมทดสอบ ตรวจ bucket และ `MAX_UPLOAD_SIZE_BYTES` ให้สอดคล้องกับเพดาน ClamAV 25 MiB
+4. เมื่อ worker เข้าถึง clamd และฐานลายเซ็นที่โหลดมีอายุไม่เกิน 72 ชั่วโมง ให้เปลี่ยน worker เป็น `required` ก่อนเปลี่ยนเว็บตาม ตรวจผลไฟล์สะอาดและไฟล์ที่พบมัลแวร์ สิทธิ์การอ่าน และการคืนพื้นที่ด้วยข้อมูลทดสอบ
+5. ติดตาม `Malware scan queue` ซึ่งรายงานจำนวนงานและอายุงานเก่าสุดเป็นมิลลิวินาที รวมถึง `Malware scan retry scheduled`, `Malware scan failed`, `scanner_signatures_stale` และ `Malware cleanup deferred` ในบันทึกของ worker
 
-เมื่อพักระบบให้เปลี่ยนเว็บเป็น `paused` ก่อน worker และรอ attempt ที่เริ่มไปแล้วจบ งานค้างยังอยู่ใน DB และ resume ตามอายุงานที่เหลือ เว็บจะตอบ `503 malware_scan_paused` สำหรับ upload/restore ใหม่ ไฟล์ที่อ่านได้อยู่ยังอ่านได้ตามสิทธิ์เดิม รักษา release ที่มี scan gate และ migration นี้ไว้ระหว่าง rollback สำหรับ quota maintenance ให้ใช้ขั้นตอนหยุด mutation และ drain ตามเดิม โดยรอ scan ที่กำลังทำงานด้วย
+เมื่อพักระบบ ให้เปลี่ยนเว็บเป็น `paused` ก่อน worker และรอให้งานที่เริ่มแล้วจบ งานค้างยังอยู่ในฐานข้อมูลและกลับมาทำต่อภายในอายุที่เหลือ เว็บจะตอบ `503 malware_scan_paused` สำหรับการอัปโหลดและกู้คืนใหม่ ส่วนไฟล์ที่พร้อมอ่านยังเข้าถึงได้ตามสิทธิ์เดิม หากย้อนรุ่น ให้คงรุ่นที่บังคับตรวจไฟล์ก่อนใช้และคงสคริปต์ปรับฐานข้อมูลนี้ไว้ ระหว่างพักระบบเพื่อจัดการโควตา ให้ระงับการแก้ข้อมูล รอให้งานเดิมจบ รวมถึงงานสแกนที่กำลังทำ
 
-ทดสอบ ClamAV ด้วยไฟล์สะอาดและ EICAR ใน service ทดสอบที่แยกจากข้อมูลจริง สำหรับการทดสอบผ่านแอป ให้ตรวจว่าไฟล์ขึ้น `pending_scan` หลังอัปโหลดและขอ preview/download ได้เมื่อ worker บันทึกสถานะ `available` แล้ว
+ทดสอบ ClamAV ด้วยไฟล์สะอาดและ EICAR ในบริการทดสอบที่แยกจากข้อมูลจริง เมื่อทดสอบจากแอป ให้ตรวจว่าไฟล์ขึ้น `pending_scan` หลังอัปโหลดและขอลิงก์ดูตัวอย่างหรือดาวน์โหลดได้เมื่อ worker บันทึก `available`
 
 ## ลืมรหัสผ่าน
 
-หน้าเข้าสู่ระบบมีลิงก์ไปที่ `/forgot-password` เพื่อขออีเมลจาก Supabase Auth และใช้ `/reset-password` สำหรับตั้งรหัสผ่านใหม่ ลิงก์ Recovery ต้องมี token ที่ยังใช้ได้ และจะถูกแลกเมื่อผู้ใช้กด **ดำเนินการต่อ** รหัสผ่านใหม่ต้องมีอย่างน้อย 12 ตัวอักษร
+หน้าเข้าสู่ระบบมีลิงก์ไปที่ `/forgot-password` เพื่อขออีเมลจาก Supabase Auth และใช้ `/reset-password` เพื่อตั้งรหัสผ่านใหม่ ลิงก์กู้คืนต้องมีโทเคนที่ยังใช้ได้ ระบบจะแลกโทเคนเมื่อผู้ใช้กด **ดำเนินการต่อ** รหัสผ่านใหม่ต้องมีอย่างน้อย 12 ตัวอักษร
 
-ทดสอบด้วย Supabase CLI และ Mailpit ในโปรเจกต์ local แยกจาก Production ใช้ URL และ publishable key ของ stack local ในตัวแปร `NEXT_PUBLIC_SUPABASE_URL` และ `NEXT_PUBLIC_SUPABASE_PUBLISHABLE_KEY` เปิด Next.js ที่ `http://localhost:3000` และเพิ่ม URL ต่อไปนี้ใน `auth.additional_redirect_urls` ของ Supabase local โดยคง URL เดิมไว้
+ทดสอบด้วย Supabase CLI และ Mailpit ในโปรเจกต์ในเครื่องที่แยกจากระบบจริง ใช้ URL และคีย์สาธารณะของโปรเจกต์ทดสอบในตัวแปร `NEXT_PUBLIC_SUPABASE_URL` และ `NEXT_PUBLIC_SUPABASE_PUBLISHABLE_KEY` เปิด Next.js ที่ `http://localhost:3000` และเพิ่ม URL ข้างล่างใน `auth.additional_redirect_urls` โดยคง URL ที่มีอยู่
 
 ```toml
 [auth]
@@ -66,147 +66,147 @@ subject = "ตั้งรหัสผ่านใหม่สำหรับ EF
 content_path = "./supabase/templates/recovery.html"
 ```
 
-คัดลอก [เทมเพลต Recovery](db/auth-templates/recovery.html) ไปที่ `supabase/templates/recovery.html` ใน working directory ของ stack local แล้วเริ่ม stack ด้วย configuration นี้ ดู URL ของ Mailpit จาก `supabase status` สร้างบัญชีอีเมลจำลองใน Auth แล้วขอลิงก์ผ่านหน้าเว็บ
+คัดลอก [เทมเพลตอีเมลกู้คืน](db/auth-templates/recovery.html) ไปที่ `supabase/templates/recovery.html` ในโฟลเดอร์ของระบบทดสอบในเครื่อง แล้วเริ่มระบบด้วยการตั้งค่านี้ ใช้ `supabase status` ดู URL ของ Mailpit สร้างบัญชีอีเมลจำลองใน Auth แล้วขอลิงก์จากหน้าเว็บ
 
-ก่อนเปิดบน Railway ให้เพิ่ม URL `https://efin-dms-web-production.up.railway.app/reset-password` แบบตรงตัวใน Supabase Redirect URLs และใส่ HTML จากเทมเพลตใน **Authentication → Email Templates → Reset Password** ทดสอบส่งผ่าน Custom SMTP โดยปิด link tracking สำหรับ Auth email คงเทมเพลต Invite และ Redirect URL ของ `/set-password` ไว้ตามเดิม
+ก่อนเปิดบน Railway ให้เพิ่ม URL `https://efin-dms-web-production.up.railway.app/reset-password` แบบตรงตัวใน Supabase Redirect URLs และใส่ HTML จากเทมเพลตใน **Authentication → Email Templates → Reset Password** ทดสอบส่งด้วย SMTP ที่กำหนดเอง โดยปิดการติดตามลิงก์ในอีเมล Auth และคงเทมเพลตคำเชิญกับ URL เปลี่ยนเส้นทางของ `/set-password` ไว้
 
-หลังรีเซ็ตสำเร็จ ระบบขอเพิกถอน refresh tokens ทุกอุปกรณ์ของบัญชีที่รีเซ็ต Access token เดิมยังอาจใช้ได้จนหมดอายุตามค่าของ Supabase Auth
+หลังรีเซ็ตสำเร็จ ระบบขอเพิกถอน refresh token ทุกอุปกรณ์ของบัญชีที่รีเซ็ต ส่วน access token เดิมอาจยังใช้ได้จนหมดอายุตามการตั้งค่า Supabase Auth
 
-[Email templates](https://supabase.com/docs/guides/auth/auth-email-templates) · [Redirect URLs](https://supabase.com/docs/guides/auth/redirect-urls) · [Custom SMTP](https://supabase.com/docs/guides/auth/auth-smtp)
+[เทมเพลตอีเมล](https://supabase.com/docs/guides/auth/auth-email-templates) · [URL เปลี่ยนเส้นทาง](https://supabase.com/docs/guides/auth/redirect-urls) · [SMTP ที่กำหนดเอง](https://supabase.com/docs/guides/auth/auth-smtp)
 
-## การจัดการ Session
+## การจัดการเซสชัน
 
-- บัญชี Supabase Auth ใช้งาน EFIN DMS ได้สูงสุด **8 ชั่วโมงจากเวลาเข้าสู่ระบบ** และต้องเข้าสู่ระบบใหม่เมื่อไม่มีการใช้งาน **30 นาที** ตัวตรวจฝั่ง API ใช้เวลาในฐานข้อมูล คำขอใช้งานทั่วไปและกิจกรรมบนหน้าเว็บนับเป็นการใช้งาน ส่วนการตรวจสถานะอัตโนมัติ การ refresh token และการตรวจงานสแกนไม่นับ
-- เมนู **ออกจากระบบ** เพิกถอนเฉพาะ session ของโปรไฟล์เบราว์เซอร์ที่กด ทุกแท็บที่ใช้ session เดียวกันจะออกพร้อมกัน ส่วนเบราว์เซอร์หรือโปรไฟล์อื่นที่ล็อกอินแยกยังใช้งานได้ API ของ EFIN DMS ปฏิเสธ token ของ session ที่เพิกถอนแล้ว ลิงก์ Storage ที่ออกไปก่อนหน้านี้ยังมีอายุของตัวเอง
-- ระงับสมาชิกแล้ว API จะปฏิเสธคำขอใหม่ของบัญชีนั้นในองค์กร เมื่อเปิดสมาชิกอีกครั้งต้องเข้าสู่ระบบใหม่ ข้อมูลสิทธิ์หน่วยงานยังใช้ต่อได้ กฎนี้ใช้กับ Auth user ส่วน API keys ใช้การหมดอายุและเพิกถอนของ key ตามเดิม
-- ก่อน deploy เว็บรุ่นนี้ ให้ผู้ดูแลฐานข้อมูล apply [migration ของ Session](db/migrations/20261109073836_dms_user_sessions.sql) กับ stack ทดสอบก่อน แล้วตรวจสิทธิ์ role `filesvc_api` และทดสอบสองเบราว์เซอร์ก่อน apply กับฐานข้อมูลจริง เว็บ pre-deploy จะตรวจ migration และสิทธิ์ให้อีกครั้ง ผู้ใช้ที่มี session เก่ากว่า 30 นาทีเมื่อเปิดกติกาครั้งแรกอาจต้องเข้าสู่ระบบใหม่ เพราะยังไม่มีประวัติกิจกรรมก่อนเปิดใช้
+- บัญชี Supabase Auth ใช้ EFIN DMS ได้สูงสุด **8 ชั่วโมงจากเวลาเข้าสู่ระบบ** และต้องเข้าสู่ระบบใหม่เมื่อไม่มีการใช้งาน **30 นาที** API ใช้เวลาจากฐานข้อมูล คำขอทั่วไปและกิจกรรมบนหน้าเว็บนับเป็นการใช้งาน ส่วนการตรวจสถานะอัตโนมัติ การต่ออายุโทเคน และการตรวจงานสแกนไม่นับ
+- เมนู **ออกจากระบบ** เพิกถอนเฉพาะเซสชันของโปรไฟล์เบราว์เซอร์ที่กด ทุกแท็บในเซสชันเดียวกันจะออกพร้อมกัน ส่วนเบราว์เซอร์หรือโปรไฟล์อื่นที่เข้าสู่ระบบแยกยังใช้งานได้ API ปฏิเสธโทเคนของเซสชันที่เพิกถอนแล้ว ส่วนลิงก์จาก Storage ที่ออกไปก่อนหน้านี้ยังมีอายุของตัวเอง
+- เมื่อระงับสมาชิก API จะปฏิเสธคำขอใหม่ของบัญชีนั้นในองค์กร เมื่อเปิดใช้งานสมาชิกอีกครั้ง ผู้ใช้ต้องเข้าสู่ระบบใหม่และยังใช้สิทธิ์หน่วยงานที่มีอยู่ได้ กติกานี้ใช้กับบัญชี Auth ส่วน API key ใช้วันหมดอายุและสถานะการเพิกถอนของคีย์
+- ก่อนติดตั้งเว็บรุ่นนี้ ให้ผู้ดูแลฐานข้อมูลรัน [สคริปต์ปรับฐานข้อมูลสำหรับเซสชัน](db/migrations/20261109073836_dms_user_sessions.sql) กับระบบทดสอบ ตรวจสิทธิ์ `filesvc_api` และทดสอบด้วยสองเบราว์เซอร์ก่อนรันบนฐานข้อมูลจริง การตรวจสอบก่อนติดตั้งจะตรวจโครงสร้างฐานข้อมูลและสิทธิ์อีกครั้ง ผู้ใช้ที่มีเซสชันเก่ากว่า 30 นาทีเมื่อเปิดใช้ครั้งแรกอาจต้องเข้าสู่ระบบใหม่ เพราะระบบยังไม่มีประวัติกิจกรรมก่อนเปิดใช้
 
-## Security hardening — รอบแรก
+## การเสริมความปลอดภัยรอบแรก
 
-เพิ่ม guard กลางสำหรับ `/api/v1/*`, Redis token buckets, bounded JSON reader, timeouts, security headers และ structured logs โดยคงสิทธิ์และ API เดิม ไม่มี migration production
+เพิ่มตัวตรวจกลางสำหรับ `/api/v1/*` ตัวจำกัดคำขอแบบโทเคนด้วย Redis การอ่าน JSON แบบจำกัดขนาด เวลารอสูงสุด ส่วนหัวความปลอดภัย และบันทึกแบบมีโครงสร้าง รุ่นนี้คงสิทธิ์และ API เดิม และไม่มีสคริปต์ปรับฐานข้อมูลจริง
 
-### Configuration และ Railway
+### การตั้งค่าและ Railway
 
-- Redis เป็น service **private** ภายใน Railway project ไม่เปิด public domain/TCP proxy; ตั้งรหัสผ่าน และใช้ private URL ผ่าน service variable reference เฉพาะเว็บ Worker ไม่ต้องใช้ Redis
-- `REDIS_URL`: runtime เท่านั้น ห้ามใส่ build ARG หรือ browser variables
-- `RATE_LIMIT_KEY_SECRET`: secret สุ่มอิสระอย่างน้อย 32 bytes ใช้ HMAC ของ identity/IP ไม่ใช้ database password หรือ Supabase key แทน สร้างด้วย `node -e "console.log(require('node:crypto').randomBytes(32).toString('base64url'))"` ใน trusted terminal แล้วใส่ Railway Variables โดยไม่บันทึกลง Git/logs
-- `RATE_LIMIT_MODE=report` เป็นค่าเริ่มต้น: นับ/รายงาน แต่ **ยังไม่ปฏิเสธ** คำขอที่เกิน rate หรือเมื่อ Redis ล่ม เมื่อทีมตรวจแล้วจึงเปลี่ยนเป็น `enforce` และ redeploy/restart
-- `TRUSTED_PROXY_MODE=railway` เชื่อ `X-Real-IP` เฉพาะ ingress ของ Railway; ทีมต้องตรวจการ overwrite header กับ domain จริงก่อนเปิด enforce ไม่เชื่อ X-Forwarded-For หากไม่มี/ผิดรูปแบบใช้ bucket unknown ร่วม Local ใช้ `local` ซึ่งไม่เชื่อ forwarding headers
-- `SECURITY_ENVIRONMENT`: namespace แยก environment; ถ้าไม่ตั้งใช้ Railway environment ID แล้วจึง NODE_ENV ทุก replica ของ environment เดียวกันต้องใช้ namespace และ HMAC secret เดียวกัน
-- Private Redis ไม่มี endpoint สำหรับ browser; ไม่ใช้ Redis production จาก local tests ใช้ container แยกต่างหาก
-- ค่า capacity ปรับได้ผ่าน `RATE_LIMIT_<IP|IDENTITY|GRANTS|UPLOADS|DESTRUCTIVE|INVITES|KEYS>_CAPACITY` ต้องเป็น integer 1–1,000,000 (uploads อย่างน้อย 20) รอบเวลาเติมกลับไม่เปลี่ยน
+- สร้าง Redis เป็นบริการ **ส่วนตัว** ภายในโปรเจกต์ Railway งดเปิดโดเมนสาธารณะหรือ TCP proxy ตั้งรหัสผ่านและส่ง URL ส่วนตัวให้เฉพาะเว็บผ่านตัวแปรอ้างอิงบริการ
+- `REDIS_URL` ใช้เฉพาะขณะรัน ห้ามใส่ใน ARG ของการสร้างอิมเมจหรือตัวแปรฝั่งเบราว์เซอร์
+- `RATE_LIMIT_KEY_SECRET` เป็นค่าลับที่สุ่มแยกอย่างน้อย 32 ไบต์สำหรับคำนวณ HMAC ของผู้เรียกและ IP สร้างด้วย `node -e "console.log(require('node:crypto').randomBytes(32).toString('base64url'))"` ในเทอร์มินัลที่เชื่อถือได้และใส่ใน Railway Variables ห้ามใช้รหัสผ่านฐานข้อมูลหรือคีย์ Supabase แทน และห้ามบันทึกค่าลง Git หรือบันทึกระบบ
+- `RATE_LIMIT_MODE=report` เป็นค่าเริ่มต้น ระบบนับและรายงานคำขอที่เกินเพดานโดยยังอนุญาตคำขอ รวมถึงเมื่อ Redis ล่ม หลังทีมตรวจแล้วให้เปลี่ยนเป็น `enforce` และติดตั้งหรือเริ่มเว็บใหม่
+- `TRUSTED_PROXY_MODE=railway` เชื่อ `X-Real-IP` เฉพาะทางรับคำขอของ Railway ให้ทีมตรวจว่า Railway เขียนทับส่วนหัวบนโดเมนจริงก่อนเปิดบังคับใช้ ระบบไม่เชื่อ `X-Forwarded-For` หากไม่มี IP หรือรูปแบบไม่ถูกต้อง จะใช้ตัวนับร่วมสำหรับ IP ที่ไม่ทราบค่า ในเครื่องใช้ `local` ซึ่งไม่เชื่อส่วนหัวจากพร็อกซี
+- `SECURITY_ENVIRONMENT` ใช้แยกชื่อชุดตัวนับตามสภาพแวดล้อม หากไม่ตั้ง ระบบใช้ ID สภาพแวดล้อม Railway ก่อนแล้วจึงใช้ `NODE_ENV` ทุกอินสแตนซ์ในสภาพแวดล้อมเดียวกันต้องใช้ชื่อชุดและค่าลับ HMAC เดียวกัน
+- Redis ส่วนตัวเปิดให้บริการภายในเท่านั้น การทดสอบในเครื่องให้ใช้คอนเทนเนอร์ Redis แยกจากระบบจริง
+- กำหนดเพดานผ่าน `RATE_LIMIT_<IP|IDENTITY|GRANTS|UPLOADS|DESTRUCTIVE|INVITES|KEYS>_CAPACITY` เป็นจำนวนเต็ม 1–1,000,000 โดยจำนวนไฟล์อัปโหลดต้องตั้งอย่างน้อย 20 รอบเวลาเติมโทเคนยังใช้ค่าเดิม
 
-| Bucket | Capacity / refill period |
+| กลุ่มคำขอ | จำนวนสูงสุด / รอบเวลาเติม |
 |---|---|
-| IP ก่อน Auth | 600 / 60 วินาที |
-| ผู้ใช้หรือ key ที่ยืนยันแล้ว | 300 / 60 วินาที |
-| Preview/download URL ทุกเวอร์ชัน | 60 / 60 วินาที |
-| Upload intents | 120 ไฟล์ / 60 วินาที; batch หักตามจำนวนไฟล์ |
-| Version restore / purge | 10 / 60 วินาที |
-| Invite | 10 / 3,600 วินาที |
-| สร้าง/เพิกถอน key | 20 / 3,600 วินาที |
+| IP ก่อนยืนยันตัวตน | 600 / 60 วินาที |
+| ผู้ใช้หรือคีย์ที่ยืนยันแล้ว | 300 / 60 วินาที |
+| ขอ URL ดูตัวอย่างหรือดาวน์โหลดทุกเวอร์ชัน | 60 / 60 วินาที |
+| ขอสิทธิ์อัปโหลด | 120 ไฟล์ / 60 วินาที โดยหักตามจำนวนไฟล์ในคำขอ |
+| กู้คืนเวอร์ชันหรือลบถาวร | 10 / 60 วินาที |
+| เชิญผู้ใช้ | 10 / 3,600 วินาที |
+| สร้างหรือเพิกถอนคีย์ | 20 / 3,600 วินาที |
 
-แต่ละ bucket เติม token ต่อเนื่องและมี burst สูงสุดเท่า capacity คำขอต้องผ่าน bucket ทั่วไปและเฉพาะงานพร้อมกัน Lua ใช้ Redis TIME และทำ admission แบบ atomic ไม่มีตัวนับ memory fallback ตัวนับมี TTL ไม่ใช่ข้อมูลธุรกิจถาวร Redis restart ที่สูญเสียข้อมูลอาจคืน burst budget จึงต้องติดตาม restart ด้วย
+ตัวนับแต่ละกลุ่มเติมโทเคนต่อเนื่องและรับคำขอรวดเดียวได้สูงสุดตามเพดาน คำขอต้องผ่านตัวนับทั่วไปและตัวนับเฉพาะงานพร้อมกัน Lua ใช้เวลาจาก Redis และตัดสินทั้งหมดเป็นขั้นตอนเดียว ตัวนับมีอายุจำกัดและไม่มีตัวนับสำรองในหน่วยความจำ หาก Redis เริ่มใหม่แล้วข้อมูลสูญหาย ระบบอาจเติมสิทธิ์รับคำขอรวดเดียวกลับมาเต็ม จึงควรติดตามการเริ่มใหม่ด้วย
 
-`429 rate_limited` มี `Retry-After`, `X-Request-Id`, `Cache-Control: no-store` และ `{ error: { code, message, requestId } }`; UI แสดงเวลารอ ไม่ replay mutation อัตโนมัติ ใน enforce เมื่อ Redis/config ใช้ไม่ได้คืน `503 security_control_unavailable` ก่อนเริ่ม mutation และ readiness/pre-deploy fail Health/static ไม่ผ่าน limiter; login ตรง Supabase Auth อยู่นอก limiter นี้
+`429 rate_limited` คืน `Retry-After`, `X-Request-Id`, `Cache-Control: no-store` และ `{ error: { code, message, requestId } }` หน้าเว็บแสดงเวลารอและไม่ส่งคำขอแก้ข้อมูลซ้ำโดยอัตโนมัติ ในโหมดบังคับใช้ หาก Redis หรือการตั้งค่าใช้ไม่ได้ ระบบคืน `503 security_control_unavailable` ก่อนแก้ข้อมูล และการตรวจความพร้อมก่อนและหลังเริ่มเว็บจะไม่ผ่าน เส้นทางตรวจสถานะและไฟล์คงที่อยู่นอกตัวจำกัดนี้ เช่นเดียวกับการเข้าสู่ระบบที่เรียก Supabase Auth โดยตรง
 
-### Request limits และ timeout
+### ขนาดคำขอและเวลารอสูงสุด
 
-- 4 KiB: search, keys, สร้าง folder/department, quota, URL grants และ status commands
-- 16 KiB: upload intent เดี่ยว/version, metadata, user operations และ folder access
-- 64 KiB: batch upload intent สูงสุด 20 ไฟล์
-- นับ bytes จาก stream จริง (รวม UTF-8 ไทย), ไม่เชื่อ Content-Length อย่างเดียว รองรับ JSON ที่ไม่ระบุ Content-Type แต่ปฏิเสธชนิดอื่นที่ระบุชัดด้วย 415
-- JSON ผิดรูปแบบคืน 400; เกินขนาด 413; อ่าน body เกิน 10 วินาทีคืน 408 ก่อนเริ่ม mutation ขนาดนี้ไม่ใช่เพดานเนื้อหาไฟล์ เพราะไฟล์ส่งตรง Storage
-- API connection timeout 5s, SQL statement timeout 15s, lock timeout 5s; Supabase fetch 15s และ restore copy 60s ไม่เปลี่ยน worker/maintenance timeout โดยเหมารวม
-- Timeout ไม่ได้แปลว่า Storage operation ไม่เคยเกิดขึ้น ระบบคง intent/reservation และ cleanup เดิม อย่าส่ง mutation ซ้ำโดยอัตโนมัติ
+- 4 KiB สำหรับค้นหา จัดการคีย์ สร้างโฟลเดอร์หรือหน่วยงาน โควตา ขอลิงก์ และคำสั่งเกี่ยวกับสถานะ
+- 16 KiB สำหรับขออัปโหลดไฟล์เดียวหรือเวอร์ชัน แก้ข้อมูลกำกับ จัดการผู้ใช้ และสิทธิ์โฟลเดอร์
+- 64 KiB สำหรับขออัปโหลดแบบชุดสูงสุด 20 ไฟล์
+- นับจำนวนไบต์ที่อ่านจริง รวมอักขระภาษาไทยใน UTF-8 โดยไม่อิง `Content-Length` อย่างเดียว คำขอ JSON ที่ไม่ระบุ `Content-Type` ยังใช้ได้ หากระบุชนิดอื่น ระบบตอบ 415
+- JSON ผิดรูปแบบได้ 400 คำขอเกินขนาดได้ 413 การอ่านเกิน 10 วินาทีได้ 408 ก่อนเริ่มแก้ข้อมูล เพดานนี้ใช้กับเนื้อหาคำขอ ส่วนไฟล์อัปโหลดส่งตรงไปยัง Storage
+- เวลารอสูงสุดของ API คือเชื่อมต่อ 5 วินาที คำสั่ง SQL 15 วินาที และรอล็อก 5 วินาที การเรียก Supabase ใช้ 15 วินาที และการคัดลอกเพื่อกู้คืนใช้ 60 วินาที ส่วน worker และงานพักระบบใช้ค่าของงานนั้น
+- เมื่อหมดเวลา งานใน Storage อาจเกิดขึ้นแล้ว ระบบจะคงคำขออัปโหลด การจอง และงานเก็บกวาดเดิมไว้ ให้ตรวจสถานะก่อนส่งคำขอที่แก้ข้อมูลซ้ำ
 
-### Headers และ logs
+### ส่วนหัว HTTP และบันทึกระบบ
 
-CSP จำกัด resource origins ไปยังเว็บและ Supabase origin ที่กำหนด ไม่มี wildcard Supabase และไม่มี unsafe-eval ใน production คง inline script/style ที่ Next.js/controls ต้องใช้ จึงยังไม่ใช่ strict CSP แบบ nonce ไม่เปลี่ยน Cache Components/PPR
+CSP จำกัดแหล่งทรัพยากรไว้ที่เว็บและ Supabase origin ที่ตั้งไว้ ระบบจริงไม่อนุญาต origin ของ Supabase แบบครอบจักรวาลหรือ `unsafe-eval` แต่ยังใช้สคริปต์และสไตล์แบบ inline ตามที่ Next.js และส่วนควบคุมต้องใช้ จึงยังไม่ได้ใช้นโยบายเข้มงวดแบบ nonce และคง Cache Components/PPR ไว้
 
-เพิ่ม frame-ancestors none, X-Frame-Options DENY, nosniff, no-referrer และ Permissions-Policy ปิด camera/microphone/geolocation HSTS production ใช้ max-age=31536000 ไม่รวม subdomains/preload เปลี่ยน NEXT_PUBLIC_SUPABASE_URL ต้อง rebuild ให้ browser bundle และ CSP ตรงกัน Headers ของ object ที่ Supabase ให้บริการโดยตรงไม่ได้ถูกเปลี่ยนจาก next.config
+เพิ่ม `frame-ancestors none`, `X-Frame-Options DENY`, `nosniff`, `no-referrer` และ `Permissions-Policy` เพื่อปิดกล้อง ไมโครโฟน และตำแหน่ง ระบบจริงใช้ HSTS `max-age=31536000` โดยไม่รวมโดเมนย่อยหรือ preload หากเปลี่ยน `NEXT_PUBLIC_SUPABASE_URL` ให้สร้างเว็บใหม่เพื่อให้โค้ดฝั่งเบราว์เซอร์และ CSP ตรงกัน ส่วนหัวของวัตถุที่ Supabase ให้บริการโดยตรงยังใช้ค่าของ Supabase
 
-Logger กลางของ API/worker ใช้ allowlist ไม่ส่ง raw errors, body, headers หรือ SQL parameters ข้อมูล nested/ข้อความถูก redact และตัด credentials/query strings ของ URL Rate-limit warnings ถูกจำกัดความถี่ต่อ process ไม่เขียน Audit DB ทุกคำขอที่ถูก throttle Audit details ปฏิเสธ sensitive fields/credentials/signed URLs และ rollback ร่วมกับ mutation คำสั่ง key:create ยังคงพิมพ์ secret ครั้งเดียวตามหน้าที่เดิม
+API และ worker ใช้ระบบบันทึกกลางที่อนุญาตเฉพาะฟิลด์ที่กำหนด และกรองข้อผิดพลาดดิบ เนื้อหาคำขอ ส่วนหัว และพารามิเตอร์ SQL ออก ข้อมูลซ้อนและข้อความจะถูกปิดบังข้อมูลลับ และระบบตัดข้อมูลรับรองกับพารามิเตอร์ค้นหาจาก URL คำเตือนเรื่องเพดานคำขอมีการจำกัดความถี่ต่อโปรเซส ระบบไม่เพิ่มรายการประวัติลงฐานข้อมูลทุกครั้งที่จำกัดคำขอ ระบบปฏิเสธฟิลด์อ่อนไหว ข้อมูลรับรอง และลิงก์ที่ลงลายเซ็นในประวัติการใช้งาน และย้อนการแก้ข้อมูลพร้อมกันเมื่อบันทึกไม่สำเร็จ คำสั่ง `key:create` ยังแสดงค่าลับครั้งเดียว
 
 ### การตรวจด้วยตนเอง
 
-ก่อนเปิดเว็บจริง ให้ทีมตรวจ login/invitation, text/image/PDF preview, download, 429/Redis outage และ trusted client IP ในสภาพแวดล้อมทดสอบบน Railway
+ก่อนเปิดเว็บจริง ให้ทีมตรวจการเข้าสู่ระบบ คำเชิญ การดูตัวอย่างข้อความ รูป และ PDF การดาวน์โหลด รหัส 429 กรณี Redis ขัดข้อง และ IP ของไคลเอนต์ที่ระบบใช้ ในสภาพแวดล้อมทดสอบบน Railway
 
-### CI และ rollout/rollback
+### CI การเปิดใช้และการย้อนรุ่น
 
-Runtime image ใช้ Node.js 24 แบบ minimal, รันด้วย user node และไม่มี npm/npx/Yarn ใน final stage คำสั่ง cloud ต้องใช้ node โดยตรง ย้าย shadcn CLI ไป devDependencies เพราะ component code ไม่ import CLI ตอน runtime
-
-
-`.github/workflows/security.yml` รัน TypeScript, lint, webpack production build, npm audit, Gitleaks full-history แบบ redact และ Trivy runtime image scan Actions และ scanner images pin SHA/digest และใช้ `contents: read`
-
-High/Critical dependency/image vulnerabilities และ secret findings ทำให้ CI fail รวม scanner/network error ด้วย ไม่เพิ่ม ignore กว้างหรือใช้ audit fix --force ข้อยกเว้นต้องระบุ advisory เหตุผล ผู้รับผิดชอบ และ expiry ผ่านการ review แยกต่างหาก Low/Moderate ยังต้องติดตามแม้ไม่เป็น blocking threshold รอบนี้
-
-ตั้ง branch protection/ruleset ของ master ให้ require: Security and regression, Dependency scan, Secret scan, Runtime image scan โดยผู้ดูแล repository หลัง workflow ถูก push และตรวจผ่าน การเพิ่ม workflow อย่างเดียวไม่ได้บังคับ merge ผ่าน CI
-
-Rollout: เตรียม private Redis/variables → deploy release ใน report → ทีมตรวจ flow/headers/IP และดู warnings → ปรับ capacity ตามหลักฐาน → เปิด enforce และตรวจ readiness หากจำเป็นต้องคืน availability ระหว่าง Redis outage เปลี่ยนกลับ report และ restart เว็บ โดยเข้าใจว่า rate limiting จะไม่ block ชั่วคราว ไม่ลบ Audit/ไฟล์/โควตาเพื่อ rollback งานนี้ไม่มี schema migration และไม่มีการ deploy หรือแก้ branch protection อัตโนมัติ
+อิมเมจสำหรับรันระบบใช้ Node.js 24 แบบขนาดเล็ก รันด้วยผู้ใช้ `node` และไม่มี npm, npx หรือ Yarn ในชั้นสุดท้าย คำสั่งบนคลาวด์จึงเรียก `node` โดยตรง ย้าย shadcn CLI ไปไว้ใน `devDependencies` เพราะส่วนประกอบหน้าเว็บไม่ได้เรียก CLI ขณะรัน
 
 
-## Railway: ทดสอบบนคลาวด์ใน project EFIN DMS
+`.github/workflows/security.yml` ตรวจ TypeScript และ lint สร้างรุ่นใช้งานจริงด้วย webpack รัน `npm audit` ใช้ Gitleaks ตรวจประวัติทั้งหมดโดยปิดบังข้อมูลที่พบ และใช้ Trivy ตรวจอิมเมจสำหรับรันระบบ GitHub Actions และอิมเมจตัวสแกนระบุ SHA หรือ digest ไว้ และใช้สิทธิ์ `contents: read`
 
-ใช้ Supabase เดิมทั้ง Database/Auth/Storage จึงเป็นข้อมูลชุดเดียวกับ local งานนี้ไม่เพิ่ม schema และไม่ย้ายไฟล์เข้า Railway
+CI จะไม่ผ่านเมื่อพบช่องโหว่ระดับ High หรือ Critical ในแพ็กเกจหรืออิมเมจ พบข้อมูลลับ หรือเครื่องสแกนหรือเครือข่ายขัดข้อง หลีกเลี่ยงข้อยกเว้นกว้างและ `audit fix --force` หากต้องยกเว้นให้ระบุประกาศช่องโหว่ เหตุผล ผู้รับผิดชอบ และวันหมดอายุ แล้วตรวจทานแยกต่างหาก ระดับ Low และ Moderate ยังต้องติดตามแม้ CI รอบนี้จะอนุญาตให้ผ่าน
 
-### ไฟล์และ configuration
+หลังส่ง workflow ขึ้น Git และตรวจว่ารันผ่าน ให้ผู้ดูแล repository ตั้งกฎป้องกันสาขา master ให้ตรวจ `Security and regression`, `Dependency scan`, `Secret scan` และ `Runtime image scan` ก่อน merge
 
-| Service | ไฟล์อ้างอิงค่า Settings | หน้าที่ |
+เตรียม Redis ส่วนตัวและตัวแปร ติดตั้งรุ่นด้วยโหมด `report` แล้วให้ทีมตรวจเส้นทางใช้งาน ส่วนหัว IP และคำเตือน ปรับเพดานตามผลตรวจก่อนเปิด `enforce` และตรวจความพร้อม หากต้องเปิดให้เว็บตอบคำขอระหว่าง Redis ขัดข้อง ให้กลับไปที่ `report` และเริ่มเว็บใหม่ ซึ่งจะอนุญาตคำขอเกินเพดานชั่วคราว ขณะย้อนรุ่นให้คงประวัติการใช้งาน ไฟล์ และโควตาไว้ รอบนี้ไม่มีการปรับโครงสร้างฐานข้อมูล และการติดตั้งกับการตั้งกฎป้องกันสาขาต้องดำเนินการแยก
+
+
+## ทดสอบ EFIN DMS บน Railway
+
+เว็บในเครื่องและบน Railway ใช้ฐานข้อมูล Auth และ Storage ของ Supabase เดียวกัน รอบนี้คงโครงสร้างฐานข้อมูลและเก็บไฟล์บน Supabase ตามเดิม
+
+### ไฟล์อ้างอิงและการตั้งค่า
+
+| บริการ | ไฟล์อ้างอิงการตั้งค่า | หน้าที่ |
 |---|---|---|
-| `efin-dms-web` | `/railway.web.json` | Next.js UI/API, HTTPS, healthcheck `/api/health/ready` |
-| `efin-dms-worker` | `/railway.worker.json` | Outbox/cleanup/audit retention; ไม่มี public domain |
+| `efin-dms-web` | `/railway.web.json` | หน้าเว็บและ API ของ Next.js, HTTPS และตรวจความพร้อมที่ `/api/health/ready` |
+| `efin-dms-worker` | `/railway.worker.json` | ประมวลผลคิว outbox เก็บกวาดไฟล์ค้าง และจัดการอายุประวัติการใช้งาน โดยไม่มีโดเมนสาธารณะ |
 
-**ข้อจำกัดที่ยืนยันจาก Dashboard และเอกสาร Railway วันที่ 3 พฤศจิกายน 2569:** service ใหม่ไม่สามารถเปิดใช้ Config as Code เดิมได้แล้ว ไฟล์ `railway.web.json`/`railway.worker.json` ใน repository ใช้เป็นรายการอ้างอิงเท่านั้น **อย่าตั้ง Railway Config File path ให้ service ใหม่** ให้ตั้งค่าผ่าน Dashboard ตามตารางด้านล่าง รอบนี้ยังไม่ได้ติดตั้ง Railway IaC SDK หรือเปลี่ยน authentication สำหรับ CLI บริการ legacy ที่เปิด Config as Code ไว้แล้วใช้ได้ถึง 1 ธันวาคม 2569 เท่านั้น ดู [Railway Config as Code](https://docs.railway.com/config-as-code) และ [Infrastructure as Code](https://docs.railway.com/infrastructure-as-code)
+**ข้อจำกัดที่ยืนยันจากหน้า Dashboard และเอกสาร Railway วันที่ 3 พฤศจิกายน 2569** บริการใหม่เปิดใช้ Config as Code แบบเดิมไม่ได้แล้ว จึงใช้ `railway.web.json` และ `railway.worker.json` เป็นรายการอ้างอิง ตั้งค่าผ่าน Dashboard ตามตาราง และเว้นช่อง Railway Config File path ของบริการใหม่ รอบนี้ยังใช้การยืนยันตัวตนเดิมของ CLI และยังไม่ได้ติดตั้ง Railway IaC SDK บริการที่เปิดใช้ Config as Code ไว้แล้วใช้ได้ถึง 1 ธันวาคม 2569 ดู [Railway Config as Code](https://docs.railway.com/config-as-code) และ [Infrastructure as Code](https://docs.railway.com/infrastructure-as-code)
 
-| Settings | เว็บ | Worker |
+| รายการตั้งค่า | เว็บ | Worker |
 |---|---|---|
-| Dockerfile path | `/Dockerfile` (ตรวจ build logs ว่าใช้ Dockerfile) | เหมือนเว็บ |
-| Root directory | Repository root | Repository root |
-| Start command | `node node_modules/next/dist/bin/next start --hostname 0.0.0.0` | `node scripts/process-outbox.mjs` |
-| Pre-deploy (อ่านอย่างเดียว) | `node scripts/check-deployment.mjs web` | `node scripts/check-deployment.mjs worker` |
-| Region / replicas | Singapore / 1 | Singapore / 1 |
+| พาธ Dockerfile | `/Dockerfile` ตรวจบันทึกการสร้างอิมเมจว่าใช้ไฟล์นี้ | เหมือนเว็บ |
+| โฟลเดอร์หลัก (Root directory) | โฟลเดอร์รากของ repository | โฟลเดอร์รากของ repository |
+| คำสั่งเริ่มระบบ (Start command) | `node node_modules/next/dist/bin/next start --hostname 0.0.0.0` | `node scripts/process-outbox.mjs` |
+| ตรวจแบบอ่านอย่างเดียวก่อนติดตั้ง (Pre-deploy) | `node scripts/check-deployment.mjs web` | `node scripts/check-deployment.mjs worker` |
+| ภูมิภาค / จำนวนอินสแตนซ์ | Singapore / 1 | Singapore / 1 |
 | Serverless | ปิด | ปิด |
-| Restart policy / retries | On Failure / 10 | On Failure / 10 |
-| Healthcheck / timeout | `/api/health/ready` / 300 วินาที | ไม่ตั้ง HTTP healthcheck |
-| Teardown overlap / draining | 0 / 60 วินาที | 0 / 120 วินาที |
-| Public domain | Railway HTTPS domain | ไม่สร้าง |
-| GitHub branch / autodeploy | `codex/railway-cloud-test` / ปิด | เหมือนเว็บ |
+| เริ่มใหม่เมื่อผิดพลาด / จำนวนครั้ง | On Failure / 10 | On Failure / 10 |
+| เส้นทางตรวจความพร้อม / เวลารอ | `/api/health/ready` / 300 วินาที | ไม่ตั้งการตรวจผ่าน HTTP |
+| เวลารันซ้อน / เวลารอให้งานจบก่อนหยุด | 0 / 60 วินาที | 0 / 120 วินาที |
+| โดเมนสาธารณะ | โดเมน HTTPS ของ Railway | ไม่สร้าง |
+| สาขา GitHub / ติดตั้งอัตโนมัติ | `codex/railway-cloud-test` / ปิด | เหมือนเว็บ |
 
-ทั้งสองใช้ Dockerfile เดียว ไม่ต้องมี Railway database หรือ Volume ตรวจรายการ staged changes ก่อนกด Deploy และตรวจค่าจาก Settings อีกครั้งหลังบันทึก โดยต้องมี Dockerfile path ที่ถูกต้องและ build logs ยืนยัน Dockerfile detection
+ทั้งสองบริการใช้ Dockerfile เดียวและไม่ต้องเพิ่มฐานข้อมูลหรือ Volume บน Railway ตรวจรายการที่รอบันทึกก่อนกด Deploy แล้วตรวจการตั้งค่าอีกครั้งหลังบันทึก ให้บันทึกการสร้างอิมเมจยืนยันว่าระบบพบและใช้ Dockerfile ในพาธที่ระบุ
 
-สำหรับ Railway CLI/Public API รุ่นที่ใช้ตรวจ (CLI 5.71.0) enum `Builder` มี `RAILPACK` แต่ไม่มี `DOCKERFILE` จึงคง builder ที่ API รองรับและตั้ง `dockerfilePath=/Dockerfile` ให้ระบบตรวจพบไฟล์ โดยยึด build logs เป็นหลักฐานว่าใช้ Dockerfile จริง ไม่ส่งค่า `DOCKERFILE` เข้า GraphQL enum โดยตรง
+Railway CLI 5.71.0 และ Public API ที่ใช้ตรวจมี `RAILPACK` ใน enum `Builder` แต่ไม่มี `DOCKERFILE` ให้คงตัวสร้างที่ API รองรับและใช้ `dockerfilePath=/Dockerfile` ให้ระบบตรวจพบไฟล์ จากนั้นยืนยันจากบันทึกการสร้างอิมเมจ และไม่ส่ง `DOCKERFILE` เป็นค่า enum ใน GraphQL
 
-Start Command ของ Docker deployment ถูกเรียกแบบ exec form จึงใช้ `node ...` โดยตรง ไม่ใส่ `exec` นำหน้าเหมือน shell script (`exec` ไม่ใช่ executable ใน image) และไม่ต้องขยาย `$PORT` ใน command เพราะ Next.js อ่าน environment เอง ดู [Railway Start Command](https://docs.railway.com/deployments/start-command)
+Railway เรียกคำสั่งเริ่ม Docker แบบ exec form ให้เรียก `node ...` โดยตรง คำสั่ง `exec` เป็นคำสั่งภายในเชลล์และไม่มีโปรแกรมชื่อนี้ในอิมเมจ Next.js อ่าน `$PORT` จากสภาพแวดล้อมอยู่แล้ว จึงไม่ต้องขยายค่าในคำสั่ง ดู [คำสั่งเริ่มระบบของ Railway](https://docs.railway.com/deployments/start-command)
 
-ใช้ read-only preflight เป็น pre-deploy command เพื่อตรวจ TLS/role/application/private bucket จาก runtime บน Railway โดยตรงก่อนเริ่ม process จริง ไม่ต้องสร้าง SSH key สำหรับการตรวจนี้ และไม่เรียก cleanup/retention หรือเขียนฐานข้อมูล หากตรวจไม่ผ่าน deployment ต้องหยุด ส่วน healthcheck ยังใช้ตรวจ database readiness เมื่อเว็บเริ่มแล้ว
+ขั้นตอนตรวจก่อนติดตั้งใช้คำสั่งแบบอ่านอย่างเดียวเพื่อยืนยัน TLS บทบาทบัญชี แอปพลิเคชัน และ bucket ส่วนตัวจากคอนเทนเนอร์ Railway โดยตรง ก่อนเริ่มโปรเซสจริง ขั้นตอนนี้ไม่ต้องใช้ SSH key และไม่เรียกงานเก็บกวาด จัดการอายุประวัติ หรือเขียนฐานข้อมูล เมื่อไม่ผ่านให้หยุดการติดตั้ง หลังเว็บเริ่มแล้วให้ใช้เส้นทางตรวจความพร้อมของฐานข้อมูลตามเดิม
 
-### ทางเลือกส่ง release ด้วย CLI (เลือกใช้กับ EFIN DMS รอบนี้)
+### วิธีส่งรุ่นด้วย Railway CLI ที่เลือกใช้กับ EFIN DMS
 
-Railway บัญชี `efinbackend` เชื่อม GitHub เป็น `efinbackend` ส่วน repository เป็นของ `OA-Project12` และ Railway App ฝั่ง OA-Project12 มีสิทธิ์ repository แล้ว ผู้ใช้เลือกส่ง source ด้วย CLI เพื่อคง GitHub integration เดิม การ deploy รอบนี้จึงไม่ผูก GitHub source/autodeploy
+บัญชี Railway `efinbackend` เชื่อมกับบัญชี GitHub `efinbackend` ส่วน repository เป็นของ `OA-Project12` และ Railway App ฝั่ง OA-Project12 เข้าถึง repository ได้แล้ว รอบนี้เลือกส่งซอร์สด้วย CLI เพื่อคงการเชื่อม GitHub เดิม โดยไม่ผูกแหล่งซอร์สหรือเปิดติดตั้งอัตโนมัติ
 
-- ใช้ Railway CLI ทางการ `@railway/cli` ซึ่งติดตั้งใน `.quota-reports/railway-cli` และเข้าสู่บัญชีเดิม ไม่แก้ dependencies ของแอป
-- Project ID: `0f2d2814-12e7-4bd6-a6f6-1459a87a93f4`; environment ID: `6f2d7ed8-cab0-4ebc-a6b8-3078d62a3fbf` (ชื่อ Railway คือ `production` แต่ยังใช้เพื่อ cloud test)
-- Web service ID: `95cbfca8-1361-4a06-8b06-4f973445885f`; worker service ID: `d98fba63-16c5-478d-9dd6-20983dc210e4`
-- สร้าง source directory จาก `git archive` ของ release commit เท่านั้น ตรวจไม่มี `.env*`, secrets หรือรายงาน แล้วส่งด้วย `railway up <release-directory> --path-as-root --project <PROJECT_ID> --environment <ENVIRONMENT_ID> --service <SERVICE_ID> --detach --message <RELEASE_SHA>` แยกทั้งสอง service
-- `up --detach` หมายถึงเริ่ม deploy แล้ว ไม่ใช่ตรวจว่าพร้อมใช้งาน ต้องตาม deployment status/build logs/healthcheck ต่อจนสำเร็จ
-- เว็บกำหนด `PORT=3000` ให้ตรง target port ของ Railway domain และใช้ `AUTH_INVITE_REDIRECT_URL=https://efin-dms-web-production.up.railway.app/set-password` ต้องเพิ่ม exact Redirect URL ใน Supabase ก่อนทดสอบคำเชิญ
-- เริ่มเว็บด้วย maintenance เปิดไว้เพื่ออ่าน/ตรวจ health ก่อน ส่วน worker จะเริ่มหลังหยุด local worker และตรวจงานค้างแล้วเท่านั้น การสร้าง empty worker/ตั้ง Variables ไม่ได้เริ่มประมวลผลงาน
+- ใช้ Railway CLI ทางการ `@railway/cli` ที่ติดตั้งใน `.quota-reports/railway-cli` และเข้าสู่บัญชีเดิม โดยคงแพ็กเกจของแอปไว้
+- ID โปรเจกต์ `0f2d2814-12e7-4bd6-a6f6-1459a87a93f4` และ ID สภาพแวดล้อม `6f2d7ed8-cab0-4ebc-a6b8-3078d62a3fbf` ใน Railway ใช้ชื่อ `production` สำหรับการทดสอบบนคลาวด์รอบนี้
+- ID บริการเว็บ `95cbfca8-1361-4a06-8b06-4f973445885f` และ ID บริการ worker `d98fba63-16c5-478d-9dd6-20983dc210e4`
+- สร้างโฟลเดอร์ซอร์สจาก `git archive` ของคอมมิตที่จะปล่อย ตรวจว่าไม่มี `.env*` ค่าลับ หรือรายงาน แล้วส่งแยกตามบริการด้วย `railway up <release-directory> --path-as-root --project <PROJECT_ID> --environment <ENVIRONMENT_ID> --service <SERVICE_ID> --detach --message <RELEASE_SHA>`
+- `up --detach` เริ่มการติดตั้งแล้วคืนการควบคุมให้เทอร์มินัล ให้ติดตามสถานะการติดตั้ง บันทึกการสร้างอิมเมจ และผลตรวจความพร้อมจนสำเร็จ
+- ตั้ง `PORT=3000` ให้ตรงกับพอร์ตปลายทางของโดเมน Railway และใช้ `AUTH_INVITE_REDIRECT_URL=https://efin-dms-web-production.up.railway.app/set-password` เพิ่ม URL นี้ในรายการอนุญาตเปลี่ยนเส้นทางของ Supabase แบบตรงตัวก่อนทดสอบคำเชิญ
+- เปิดเว็บในโหมดพักระบบเพื่ออ่านและตรวจสถานะ เริ่ม worker บนคลาวด์หลังหยุด worker ในเครื่องและตรวจงานค้างแล้ว การสร้างบริการ worker หรือใส่ตัวแปรอย่างเดียวยังไม่เริ่มประมวลผลงาน
 
-Docker ใช้ Node 24, `npm ci`, webpack production build และ production dependencies รันด้วยผู้ใช้ `node` คำสั่งเว็บใช้ `PORT` ที่ Railway ส่งมาและ bind `0.0.0.0` worker ใช้ `node scripts/process-outbox.mjs` จึงไม่ต้องมี `.env.local` คำสั่ง npm สำหรับ local ยังทำงานเหมือนเดิม
+Docker ใช้ Node 24, `npm ci`, webpack สำหรับสร้างรุ่นใช้งานจริง และแพ็กเกจที่จำเป็นขณะรัน โปรเซสรันด้วยผู้ใช้ `node` เว็บรับ `PORT` จาก Railway และฟังที่ `0.0.0.0` ส่วน worker เรียก `node scripts/process-outbox.mjs` จึงไม่ต้องใช้ `.env.local` คำสั่ง npm ในเครื่องยังใช้ได้ตามเดิม
 
-ใส่ Railway Variables ตาม `railway.variables.example` ซึ่งมีเฉพาะ placeholder:
+ตั้ง Railway Variables ตาม `railway.variables.example` ซึ่งใช้ค่าตัวอย่าง
 
-- ทั้งสอง service: Supabase URL/secret, private bucket และค่า maintenance ตามตัวอย่าง ตั้ง database URL เฉพาะที่ service นั้นต้องใช้
-- **ทั้งสอง build** ต้องมี `NEXT_PUBLIC_SUPABASE_URL` และ `NEXT_PUBLIC_SUPABASE_PUBLISHABLE_KEY` เพราะ build image เดียวกัน แม้ worker ไม่ใช้ browser configuration ขณะรัน เปลี่ยนสองค่านี้ต้อง rebuild
-- เว็บ: `DATABASE_URL`, `AUTH_APPLICATION_ID`, `AUTH_INVITE_REDIRECT_URL`, `MAX_UPLOAD_SIZE_BYTES` worker: `WORKER_DATABASE_URL` และ alert webhook เดิมถ้ามี
-- Runtime secrets ไม่ถูกประกาศเป็น Docker ARG และไม่ต้องใช้ระหว่าง build; ห้ามส่ง `.env.local` ไป build context หรือ commit secrets
-- ใช้ Session Pooler พอร์ต 5432 กับ login สำหรับ `filesvc_api` และ `filesvc_worker` แยกกัน ไม่ใช้ `postgres` และ URL-encode password ส่วน pools ปัจจุบันใช้ได้สูงสุดเว็บ 5 + worker 2 connections ต่อชุด deployment ต้องเผื่อ local และ deployment ที่ซ้อนระหว่างเปลี่ยนรุ่นด้วย
-- ใช้ `sslmode=verify-full` และ CA ที่ตรวจแล้ว Linux path คือ `/app/certs/prod-ca-2021.crt`; image ตั้ง `NODE_EXTRA_CA_CERTS` ไว้ ห้ามใช้ Windows path, `NODE_TLS_REJECT_UNAUTHORIZED=0` หรือปิด `rejectUnauthorized` CA เป็น public certificate ไม่ใช่ private key แต่ต้องตรวจวันหมดอายุ/การหมุนเวียนก่อนปล่อยแต่ละครั้ง
+- ทั้งสองบริการใช้ URL และคีย์ลับของ Supabase, bucket ส่วนตัว และค่าพักระบบตามตัวอย่าง ตั้งสตริงฐานข้อมูลแยกตามบริการที่ต้องใช้
+- **ตอนสร้างอิมเมจทั้งสองบริการ** ต้องตั้ง `NEXT_PUBLIC_SUPABASE_URL` และ `NEXT_PUBLIC_SUPABASE_PUBLISHABLE_KEY` เพราะใช้กระบวนการสร้างอิมเมจเดียวกัน แม้ worker ไม่ใช้ค่าฝั่งเบราว์เซอร์ขณะรัน หากเปลี่ยนค่าต้องสร้างอิมเมจใหม่
+- เว็บใช้ `DATABASE_URL`, `AUTH_APPLICATION_ID`, `AUTH_INVITE_REDIRECT_URL`, `MAX_UPLOAD_SIZE_BYTES` ส่วน worker ใช้ `WORKER_DATABASE_URL` และ webhook แจ้งเตือนเดิมถ้ามี
+- ค่าลับใช้เฉพาะขณะรัน จึงไม่ประกาศเป็น Docker ARG และไม่ต้องใช้ตอนสร้างอิมเมจ อย่าส่ง `.env.local` เข้าโฟลเดอร์ที่ Docker ใช้สร้างอิมเมจหรือบันทึกค่าลับลง Git
+- ใช้ Session Pooler พอร์ต 5432 แยกบัญชีสำหรับ `filesvc_api` และ `filesvc_worker` โดยไม่ใช้ `postgres` และเข้ารหัสรหัสผ่านตามรูปแบบ URL ปัจจุบันพูลเชื่อมต่อรายรุ่นใช้ได้สูงสุดเว็บ 5 และ worker 2 การเชื่อมต่อ ให้เผื่อการใช้งานในเครื่องและช่วงเปลี่ยนรุ่นที่โปรเซสรันซ้อนกัน
+- ใช้ `sslmode=verify-full` และใบรับรอง CA ที่ตรวจแล้ว อิมเมจ Linux ใช้ `/app/certs/prod-ca-2021.crt` และตั้ง `NODE_EXTRA_CA_CERTS` ไว้ ใช้พาธ Linux โดยคงการตรวจใบรับรอง เปิด `rejectUnauthorized` และหลีกเลี่ยง `NODE_TLS_REJECT_UNAUTHORIZED=0` ใบรับรอง CA เป็นข้อมูลสาธารณะ ให้ตรวจวันหมดอายุและการหมุนเวียนก่อนปล่อยรุ่น
 
-### Build และ preflight
+### สร้างอิมเมจและตรวจความพร้อมก่อนติดตั้ง
 
-รันจาก PowerShell โดยใส่ **เฉพาะ public values** ใน process environment (อย่าใส่ server secret เป็น build arg):
+รันจาก PowerShell โดยตั้ง **เฉพาะค่าสาธารณะ** ในตัวแปรของโปรเซส ค่าลับฝั่งเซิร์ฟเวอร์ใช้ตอนรันเท่านั้น
 
 ```powershell
 $env:NEXT_PUBLIC_SUPABASE_URL = 'https://<project-ref>.supabase.co'
@@ -214,7 +214,7 @@ $env:NEXT_PUBLIC_SUPABASE_PUBLISHABLE_KEY = '<publishable-key>'
 docker build --build-arg NEXT_PUBLIC_SUPABASE_URL --build-arg NEXT_PUBLIC_SUPABASE_PUBLISHABLE_KEY -t efin-dms:railway-test .
 ```
 
-สร้างไฟล์ variables แยก web/worker ไว้ในตำแหน่งที่ Git ignore โดยใช้ค่าจริงเฉพาะ runtime และ Linux certificate path Docker `--env-file` ใช้ `NAME=value` ไม่มี shell quoting หรือ variable expansion จากนั้นตรวจแบบอ่านอย่างเดียว:
+สร้างไฟล์ตัวแปรแยกของเว็บและ worker ในตำแหน่งที่ Git ละเว้น ใช้ค่าจริงเฉพาะขณะรันและใช้พาธใบรับรองสำหรับ Linux Docker `--env-file` อ่าน `NAME=value` โดยไม่ตีความเครื่องหมายคำพูดหรือขยายตัวแปรเหมือนเชลล์ จากนั้นตรวจแบบอ่านอย่างเดียว
 
 ```powershell
 docker run --rm --env-file .quota-reports/railway-web.env efin-dms:railway-test node scripts/check-deployment.mjs web
@@ -224,60 +224,60 @@ docker run --rm --name efin-dms-web-test -p 127.0.0.1:3018:3000 --env-file .quot
 # หลังตรวจเสร็จ: docker stop efin-dms-web-test
 ```
 
-`check-deployment.mjs` ตรวจ TLS, dedicated login/role, active application (web), outbox read/audit function privilege (worker) และ private bucket โดยไม่เริ่ม worker หรือแก้ข้อมูล ผล roundTripMs เป็นเวลาจากตำแหน่งที่รันสคริปต์ ไม่ใช่ latency จาก Railway ถ้าบucket ยังไม่มี size limit ต้องตรวจให้ตรงข้อจำกัด upload ก่อนเปิดให้ทีมทดสอบ
+`check-deployment.mjs` ตรวจ TLS บัญชีและบทบาทเฉพาะ แอปพลิเคชันที่ยังใช้งานสำหรับเว็บ สิทธิ์อ่าน outbox และเรียกฟังก์ชัน Audit สำหรับ worker รวมถึง bucket ส่วนตัว โดยไม่เริ่ม worker หรือแก้ข้อมูล ค่า roundTripMs คือเวลาจากจุดที่รันสคริปต์ หากยังไม่ได้ตั้งเพดานขนาดไฟล์ใน bucket ให้ตรวจว่าตรงกับเพดานอัปโหลดก่อนเปิดทดสอบ
 
-### ลำดับ deploy
+### ลำดับการติดตั้ง
 
-1. ยืนยัน backup/จุดกู้คืนของ Supabase ที่มีอยู่ก่อน หากยังยืนยันไม่ได้ให้คงการทดสอบ cloud แบบอ่านอย่างเดียว บันทึก release commit และค่าตั้งต้นของ services โดยไม่บันทึก secret ลง Git
-2. รวมโค้ด UI และ deployment files ที่ตรวจแล้วเข้า release commit เดียวบน GitHub เก็บการแก้เดิมทั้งหมด ไม่ต้องนำ `.env.local`, reports, `docs`, `supabase`, `postman`, `prototype` หรือ `.agents` ขึ้น Git
-3. ใน project **EFIN DMS** สร้าง web จาก `OA-Project12/file-management-efin` ตั้ง Service Settings ตามตารางและ Variables แล้วปิด automatic deployments ถ้าค้นหา repository ไม่พบต้องให้ Railway GitHub App เข้าถึงเฉพาะ repository นี้ก่อน อย่าใช้ repository ชื่อใกล้เคียงแทน Deploy commit ที่เลือกด้วยตนเอง แล้วสร้าง Railway HTTPS domain ตรวจ healthcheck/login/รายการไฟล์ก่อน
-4. ตั้ง `AUTH_INVITE_REDIRECT_URL=https://<railway-domain>/set-password` เพิ่ม exact URL ใน Supabase Auth Redirect URLs และตรวจ email template ว่าใช้ redirect ที่ส่งมา เก็บ localhost และ Site URL/กติกาสมัครสมาชิกเดิมไว้ในรอบ cloud test
-5. ทดสอบเชิญ/ตั้งรหัสผ่านด้วยบัญชีทดสอบ Default SMTP ของ Supabase ส่งได้เฉพาะอีเมลที่ระบบอนุญาต ถ้าจะเชิญบุคคลทั่วไปต้องตั้ง custom SMTP ก่อน ไม่เปลี่ยน SMTP หรือสร้างบัญชีใหม่โดยไม่ระบุผู้ให้บริการ/ผู้รับ
-6. หยุด local worker ที่ใช้ Supabase เดียวกันก่อนเปิด cloud worker ตรวจงานค้าง/cleanup ที่ถึงกำหนด เพราะ worker จะทำงานกับข้อมูลเดิมทั้ง application ไม่ได้จำกัดเฉพาะไฟล์ทดสอบ สร้าง worker service/Settings/Variables ตามตารางโดยไม่เพิ่ม public domain แล้ว deploy release commit เดียวกับเว็บ
-7. รัน read-only preflight จาก runtime บน Railway อีกครั้งเพื่อบันทึก latency/สิทธิ์จริง เปิด logs ตรวจ outbox retry, cleanup และ audit retention ไม่เรียก retention function เองเพื่อทดสอบ
-8. ทดสอบ upload/complete, preview/download, metadata, versions/restore, trash/restore/purge, Audit และ quota ด้วยไฟล์ทดสอบที่ระบุไว้ ตรวจ restart/redeploy แล้วข้อมูลยังอยู่บน Supabase
+1. ยืนยันข้อมูลสำรองหรือจุดกู้คืนของ Supabase ก่อน หากยังยืนยันไม่ได้ ให้คงการทดสอบบนคลาวด์แบบอ่านอย่างเดียว บันทึกคอมมิตที่จะปล่อยและค่าตั้งต้นของบริการโดยเก็บค่าลับไว้นอก Git
+2. รวมโค้ดหน้าเว็บและไฟล์การติดตั้งที่ตรวจแล้วในคอมมิตเดียวบน GitHub โดยเก็บการแก้ไขเดิมไว้ เว้น `.env.local`, รายงาน, `docs`, `supabase`, `postman`, `prototype` และ `.agents` จาก Git
+3. ในโปรเจกต์ **EFIN DMS** สร้างเว็บจาก `OA-Project12/file-management-efin` ตั้งค่าบริการและตัวแปรตามตาราง แล้วปิดการติดตั้งอัตโนมัติ หากหา repository ไม่พบ ให้ Railway GitHub App เข้าถึงเฉพาะ repository นี้ ติดตั้งคอมมิตที่เลือกด้วยตนเองแล้วสร้างโดเมน HTTPS บน Railway ก่อนตรวจการตอบสถานะ การเข้าสู่ระบบ และรายการไฟล์
+4. ตั้ง `AUTH_INVITE_REDIRECT_URL=https://<railway-domain>/set-password` เพิ่ม URL ตรงตัวใน Supabase Auth Redirect URLs และตรวจว่าเทมเพลตอีเมลใช้ URL ที่ส่งมา คง URL ของ localhost, Site URL และกติกาสมัครสมาชิกเดิมระหว่างทดสอบบนคลาวด์
+5. ทดสอบเชิญและตั้งรหัสผ่านด้วยบัญชีทดสอบ SMTP เริ่มต้นของ Supabase ส่งได้เฉพาะอีเมลที่ระบบอนุญาต หากเชิญผู้ใช้ทั่วไป ให้ตั้ง SMTP ที่กำหนดเองก่อน ระบุผู้ให้บริการและผู้รับก่อนเปลี่ยน SMTP หรือสร้างบัญชีใหม่
+6. หยุด worker ในเครื่องที่ใช้ Supabase เดียวกันก่อนเปิด worker บนคลาวด์ ตรวจงานค้างและงานเก็บกวาดที่ถึงกำหนด เพราะ worker จะประมวลผลข้อมูลเดิมทั้งแอปพลิเคชัน สร้างบริการ worker ตั้งค่าและตัวแปรตามตารางโดยไม่เพิ่มโดเมนสาธารณะ แล้วติดตั้งคอมมิตเดียวกับเว็บ
+7. รันการตรวจแบบอ่านอย่างเดียวจาก Railway อีกครั้งเพื่อบันทึกเวลาตอบสนองและสิทธิ์จริง ตรวจบันทึกการลองงาน outbox ใหม่ การเก็บกวาด และการจัดการอายุประวัติ โดยไม่เรียกฟังก์ชันจัดการอายุประวัติเองเพื่อทดสอบ
+8. ใช้ไฟล์ทดสอบที่ระบุไว้ลองอัปโหลดและยืนยัน ดูตัวอย่างและดาวน์โหลด แก้ข้อมูลกำกับ จัดการเวอร์ชันและกู้คืน ย้ายลงถังขยะ กู้คืนและลบถาวร ตรวจประวัติการใช้งานและโควตา จากนั้นลองเริ่มระบบหรือติดตั้งใหม่แล้วตรวจว่าข้อมูลยังอยู่บน Supabase
 
-ไม่รัน migration, bootstrap admin, create key, storage limits, quota backfill หรือ `--apply` ใน build/start/pre-deploy อัตโนมัติ ไม่ตั้ง finite quota ให้หน่วยงานจริงเพื่อทดสอบ
+การรันสคริปต์ปรับฐานข้อมูล สร้างผู้ดูแลหรือคีย์ ตั้งเพดาน Storage เติมโควตาย้อนหลัง และ `--apply` ดำเนินการแยกจากขั้นตอนสร้างอิมเมจ เริ่มระบบ หรือตรวจก่อนติดตั้ง ให้ใช้หน่วยงานทดสอบเมื่อตั้งเพดานโควตา
 
-### Maintenance, monitoring และ rollback
+### การพักระบบ ติดตาม และย้อนรุ่น
 
-`STORAGE_QUOTA_CONTROL_DIR=/tmp/efin-dms-quota` เป็นพื้นที่ชั่วคราวในแต่ละ container **ไม่แชร์** ระหว่างเว็บกับ worker และหายเมื่อสร้าง container ใหม่ ไม่ต้องเพิ่ม Railway Volume เพื่อเก็บไฟล์ผู้ใช้ เพราะอยู่บน Supabase อยู่แล้ว
+`STORAGE_QUOTA_CONTROL_DIR=/tmp/efin-dms-quota` อยู่ในพื้นที่ชั่วคราวของแต่ละคอนเทนเนอร์ เว็บและ worker ใช้พื้นที่คนละชุด ข้อมูลนี้หายเมื่อสร้างคอนเทนเนอร์ใหม่ ไฟล์ผู้ใช้เก็บใน Supabase จึงไม่ต้องเพิ่ม Railway Volume สำหรับไฟล์เหล่านั้น
 
-หากต้องใช้ quota `--apply` ให้หยุด direct writers และตั้ง `STORAGE_QUOTA_MAINTENANCE=1` แล้ว restart **ทุก** web/worker/local instance ที่ใช้ฐานข้อมูลเดียวกัน รอคำขอเดิมจบและยืนยันว่า worker ไม่ทำ cleanup/purge ค่อย apply จากผู้ปฏิบัติงานคนเดียว lock file ของ CLI ไม่ได้หยุด services บน host อื่น Signed upload URL เดิมยังส่งเข้า Storage ได้ จึงต้องคง reservation/ตรวจ snapshot ตามเครื่องมือเดิม เมื่อ reconcile ผ่านค่อยคืน flag เป็น `0` และ restart ทุก instance
+หากต้องใช้คำสั่งโควตากับ `--apply` ให้หยุดการเขียนตรง ตั้ง `STORAGE_QUOTA_MAINTENANCE=1` แล้วเริ่มเว็บ worker และอินสแตนซ์ในเครื่อง **ทุกตัว** ที่ใช้ฐานข้อมูลเดียวกันใหม่ รอคำขอเดิมจบและยืนยันว่า worker ไม่ได้เก็บกวาดหรือลบถาวร จากนั้นให้ผู้ปฏิบัติงานหนึ่งคนรันคำสั่ง ไฟล์ล็อกของ CLI มีผลเฉพาะเครื่องนั้น ลิงก์อัปโหลดเดิมยังส่งไฟล์ตรงเข้า Storage ได้ จึงต้องคงยอดจองและตรวจสภาพข้อมูลตามขั้นตอนเดิม เมื่อตรวจยอดผ่าน ให้คืนค่าเป็น `0` และเริ่มทุกอินสแตนซ์ใหม่
 
-ตรวจ web health/logs, worker restarts, งาน outbox ที่ค้าง/ล้มเหลว และ audit retention ผ่านช่องทางปฏิบัติการเดิม Railway healthcheck ตรวจตอน deploy เท่านั้น ตั้ง external uptime monitor ที่ URL `/api/health/ready` ก่อนเปิดจริง โดยไม่ใส่ token ลง URL และไม่ส่ง secret/signed URL เข้า logs บันทึกผล smoke test ว่าผ่าน/ไม่ผ่าน/ยังไม่ได้ตรวจแยกกัน
+ตรวจสถานะและบันทึกเว็บ การเริ่มใหม่ของ worker งาน outbox ที่ค้างหรือล้มเหลว และการจัดการอายุประวัติผ่านช่องทางเดิม Railway ตรวจสถานะตอนติดตั้ง ให้ตั้งตัวตรวจความพร้อมภายนอกที่ `/api/health/ready` ก่อนเปิดจริง เก็บโทเคนไว้นอก URL และเก็บค่าลับกับลิงก์ที่ลงลายเซ็นไว้นอกบันทึก ระบุผลตรวจเบื้องต้นเป็นผ่าน ไม่ผ่าน หรือยังไม่ได้ตรวจ
 
-เมื่อจำเป็นต้อง rollback ให้ pause mutation/worker ตามผลกระทบ แล้ว deploy release ก่อนหน้าที่เข้ากันได้ทั้งเว็บและ worker ตรวจ public build variables, healthcheck และ outbox ก่อนคืนระบบ **rollback image ไม่กู้ไฟล์ที่ purge แล้วและไม่ย้อนข้อมูลที่แก้** รอบนี้ไม่มี schema migration จึงไม่มี migration rollback
+หากต้องย้อนรุ่น ให้พักคำขอแก้ข้อมูลและ worker ตามผลกระทบ แล้วติดตั้งรุ่นก่อนหน้าที่เข้ากันได้ทั้งเว็บและ worker ตรวจตัวแปรสาธารณะ ความพร้อม และงาน outbox ก่อนคืนระบบ การย้อนอิมเมจจะไม่กู้ไฟล์ที่ลบถาวรหรือย้อนข้อมูลที่แก้ไปแล้ว รอบนี้ไม่มีสคริปต์ปรับโครงสร้างฐานข้อมูลให้ย้อน
 
-เอกสารอ้างอิง: [Railway Dockerfiles](https://docs.railway.com/builds/dockerfiles), [configuration](https://docs.railway.com/config-as-code/reference), [healthchecks](https://docs.railway.com/deployments/healthchecks), [Supabase connections](https://supabase.com/docs/guides/database/connecting-to-postgres), [Auth redirects](https://supabase.com/docs/guides/auth/redirect-urls), [SMTP](https://supabase.com/docs/guides/auth/auth-smtp)
+เอกสารอ้างอิง [Dockerfile บน Railway](https://docs.railway.com/builds/dockerfiles), [การตั้งค่า](https://docs.railway.com/config-as-code/reference), [การตรวจความพร้อม](https://docs.railway.com/deployments/healthchecks), [การเชื่อมต่อ Supabase](https://supabase.com/docs/guides/database/connecting-to-postgres), [การเปลี่ยนเส้นทาง Auth](https://supabase.com/docs/guides/auth/redirect-urls), [SMTP](https://supabase.com/docs/guides/auth/auth-smtp)
 
-### ผลตรวจเตรียม deploy — 3 พฤศจิกายน 2569
+### ผลตรวจเตรียมติดตั้ง วันที่ 3 พฤศจิกายน 2569
 
-- ผ่าน: Docker Linux production build โดยไม่มี server secrets ตอน build, รันด้วย UID 1000, ไม่มี `.env.local` ใน image, maintenance directory เขียนได้ และ `PORT=8080`/bind `0.0.0.0` ทำงาน
-- ผ่าน: `/api/health/live` และ `/api/health/ready` จาก container; preflight เว็บ/worker ไปยัง Supabase เดิมผ่าน TLS ที่ตรวจ certificate แล้ว รวม role, active application, private bucket, outbox read และสิทธิ์เรียก audit retention (ไม่ได้เรียก function จริง)
-- ผ่าน: UI suites CURRENT/Search/Version/Quota บน Linux image ด้วย API/Auth/Storage จำลอง และตรวจ browser output 71 ไฟล์ไม่พบ runtime database URLs หรือ Supabase secret
-- ผ่าน: quota reconciliation แบบรายงานจาก Linux image ตรวจครบ 3 หน่วยงาน issues=0 โดยไม่มี `--apply` และไม่เปลี่ยนยอด รายงานอยู่ในโฟลเดอร์ Git ignore
-- Worker ตรวจการโหลด modules และปฏิเสธเริ่มงานเมื่อไม่มี configuration แล้ว ยังไม่ได้เริ่ม worker จริงเพื่อไม่ประมวลผลงานลบเดิมก่อนตรวจขั้นตอนเปิดระบบ
-- ยังไม่ได้ตรวจบน Railway: สร้าง project/services/domain, latency จาก Singapore, invitation ผ่าน Railway URL, live-role smoke tests, cloud worker และ restart/redeploy ขณะใช้ข้อมูลจริง ต้องมีบัญชี Railway ที่เชื่อมต่อก่อน ผล local/container ไม่ถือเป็นผล smoke test บน Railway
+- ผ่านการสร้างอิมเมจจริงบน Docker Linux โดยไม่ใช้ค่าลับฝั่งเซิร์ฟเวอร์ รันด้วย UID 1000 ไม่มี `.env.local` ในอิมเมจ เขียนโฟลเดอร์พักระบบได้ และรับ `PORT=8080` ที่ `0.0.0.0` ได้
+- ผ่านการเรียก `/api/health/live` และ `/api/health/ready` จากคอนเทนเนอร์ เว็บและ worker ตรวจ Supabase ผ่าน TLS ที่ตรวจใบรับรองแล้ว รวมบทบาท แอปพลิเคชันที่ใช้งาน bucket ส่วนตัว สิทธิ์อ่าน outbox และสิทธิ์เรียกฟังก์ชันจัดการอายุประวัติ โดยไม่ได้เรียกฟังก์ชันนั้นจริง
+- ผ่านชุดตรวจหน้าจอ CURRENT, การค้นหา เวอร์ชัน และโควตาบนอิมเมจ Linux ด้วย API, Auth และ Storage จำลอง ตรวจผลลัพธ์จากเบราว์เซอร์ 71 ไฟล์ไม่พบ URL ฐานข้อมูลขณะรันหรือคีย์ลับ Supabase
+- ผ่านการตรวจโควตาแบบออกรายงานจากอิมเมจ Linux ครบ 3 หน่วยงาน ได้ `issues=0` โดยไม่มี `--apply` และยอดไม่เปลี่ยน รายงานอยู่ในโฟลเดอร์ที่ Git ละเว้น
+- ตรวจว่า worker โหลดโมดูลได้และปฏิเสธเริ่มงานเมื่อไม่มีการตั้งค่า ตอนบันทึกผลยังไม่ได้เริ่ม worker จริง เพื่อให้ตรวจขั้นตอนเปิดระบบก่อนประมวลผลงานลบเดิม
+- สิ่งที่ยังไม่ได้ตรวจบน Railway ในเวลานั้นคือการสร้างโปรเจกต์ บริการ และโดเมน เวลาตอบสนองจากสิงคโปร์ คำเชิญผ่าน URL ของ Railway การตรวจเบื้องต้นด้วยบทบาทจริง worker บนคลาวด์ และการเริ่มหรือติดตั้งใหม่กับข้อมูลจริง การตรวจเหล่านี้ต้องใช้บัญชี Railway ที่เชื่อมต่อแล้ว
 
-## Indigo Workspace interface
+## หน้าตา Indigo Workspace
 
-The Indigo Workspace interface uses a light violet palette, IBM Plex Sans Thai and shared semantic tokens. Active styles are `globals.css`, `dms.css` and the scoped version/quota styles. The sign-in illustration is served from `public/indigo-auth.jpg`.
+Indigo Workspace ใช้โทนม่วงอ่อน แบบอักษร IBM Plex Sans Thai และตัวแปรสไตล์กลาง ไฟล์สไตล์ที่ใช้งานคือ `globals.css`, `dms.css` และสไตล์เฉพาะส่วนของเวอร์ชันและโควตา ภาพประกอบหน้าเข้าสู่ระบบมาจาก `public/indigo-auth.jpg`
 
-- File workspace, trash scope and storage filters are independent. Returning to files preserves the last workspace; **ไฟล์ทุกหน่วยงาน** explicitly clears its department/folder. Expanded navigation branches read immediate children through the existing folder API.
-- Desktop navigation uses a department and folder sidebar, while mobile uses **เอกสาร / ถังขยะ / จัดการ** with a folder picker. File details use a wide modal on desktop and a full-screen panel on mobile. Unsaved changes require an explicit discard; active mutations/uploads block context changes.
-- Search retains applied/draft criteria, removable filter chips and cursor pagination. Preview/download only request URLs on user action; plain text renders as text. Dates display Thai Buddhist years in Asia/Bangkok, and audit wall-time filters explicitly convert UTC+7 independently of the browser timezone.
-- Upload queues distinguish sending, confirming, partial folder-move failure and unknown outcomes. Only pre-send retryable entries may start another upload. Version operations retain their state in the details panel while they are in progress.
-- Trash uses a queued receipt after purge; it does not claim physical deletion or released quota. Quotas retain exact-byte conversion, revision checks and separate used/reserved presentation.
-- Auth users, including Tenant Admins, still do not receive `keys:manage`. The conditional key UI preserves one-time secret acknowledgement and can only be exercised with an authorized identity; no production entry point was added for ordinary Auth sessions.
+- ตัวกรองของหน้าเอกสาร ถังขยะ และพื้นที่จัดเก็บแยกจากกัน เมื่อกลับมาหน้าเอกสาร ระบบจะจำหน่วยงานและโฟลเดอร์ที่เลือกล่าสุด กด **ไฟล์ทุกหน่วยงาน** เพื่อล้างตัวเลือกทั้งสอง เมื่อขยายโฟลเดอร์ เมนูจะเรียก API โฟลเดอร์เดิมเพื่อโหลดเฉพาะรายการลูกโดยตรง
+- บนเดสก์ท็อปใช้เมนูหน่วยงานและโฟลเดอร์ทางซ้าย บนมือถือใช้เมนู **เอกสาร / ถังขยะ / จัดการ** และแผงเลือกโฟลเดอร์ รายละเอียดไฟล์เปิดในหน้าต่างกว้างบนเดสก์ท็อปและเต็มจอบนมือถือ หากมีข้อมูลที่ยังไม่บันทึก ระบบจะให้ยืนยันก่อนทิ้งข้อมูล และจะระงับการสลับหน้าเมื่อกำลังบันทึกหรืออัปโหลด
+- การค้นหาแยกเงื่อนไขที่ใช้อยู่กับค่าที่กำลังแก้ แสดงตัวกรองที่กดลบได้ และแบ่งหน้าด้วยเคอร์เซอร์ ระบบขอลิงก์ดูตัวอย่างหรือดาวน์โหลดเมื่อผู้ใช้กดเท่านั้น ไฟล์ข้อความธรรมดาแสดงเป็นข้อความ วันที่ใช้ปี พ.ศ. และเขตเวลา Asia/Bangkok ตัวกรองวันเวลาของประวัติการใช้งานแปลงจาก UTC+7 โดยไม่อิงเขตเวลาของเบราว์เซอร์
+- คิวอัปโหลดแยกสถานะกำลังส่ง กำลังยืนยัน ย้ายโฟลเดอร์สำเร็จบางส่วน และยังไม่ทราบผล เฉพาะรายการที่อนุญาตให้ลองใหม่และยังไม่เริ่มส่งไฟล์เท่านั้นที่เริ่มอัปโหลดอีกครั้งได้ ขณะจัดการเวอร์ชัน แผงรายละเอียดจะคงสถานะงานที่กำลังทำอยู่
+- เมื่อลบถาวร หน้าถังขยะแจ้งว่าส่งงานเข้าคิวแล้ว ข้อความนี้ยืนยันเฉพาะการเข้าคิว การลบจริงและคืนโควตาขึ้นอยู่กับ worker ส่วนโควตาคำนวณจากจำนวนไบต์ที่แม่นยำ ตรวจรุ่นข้อมูล และแยกพื้นที่ใช้แล้วกับพื้นที่จองไว้
+- บัญชี Supabase Auth รวมถึง Tenant Admin ไม่มีสิทธิ์ `keys:manage` หน้าจัดการคีย์จะแสดงเฉพาะผู้ที่มีสิทธิ์ และยังให้ยืนยันว่าได้บันทึกค่าลับที่แสดงครั้งเดียว รุ่นนี้ไม่ได้เพิ่มทางเข้าหน้าดังกล่าวให้บัญชี Supabase Auth ทั่วไปบนระบบจริง
 
-There are no new backend endpoints, database migrations, scopes, sharing features, folder CRUD, bulk operations or deep links in this change. Existing API authorization remains authoritative. Drafts and one-time content grants stay in memory; the existing Supabase Auth session persistence is unchanged.
+การปรับหน้าตารอบนี้ใช้ API การตรวจสิทธิ์ และโครงสร้างฐานข้อมูลเดิม ยังไม่มีการแชร์เอกสาร การจัดการโฟลเดอร์ครบทุกแบบ การทำงานหลายรายการพร้อมกัน หรือลิงก์ตรงเข้าสู่หน้าภายใน ระบบเก็บค่าที่ยังไม่บันทึกและสิทธิ์เข้าถึงไฟล์ที่ออกครั้งเดียวไว้ในหน่วยความจำ และใช้วิธีจัดเก็บเซสชันของ Supabase Auth เดิม
 
-Reports under `.quota-reports/` contain historical test results.
+ผลการทดสอบก่อนหน้านี้อยู่ใน `.quota-reports/`
 
-## File name and metadata keyword search
+## ค้นหาชื่อไฟล์และข้อมูลกำกับไฟล์
 
-`POST /api/v1/files/search` accepts optional `q` together with all existing filters:
+`POST /api/v1/files/search` รองรับ `q` เป็นตัวเลือกเพิ่มเติม ใช้ร่วมกับตัวกรองเดิมได้ทั้งหมด
 
 ```json
 {
@@ -287,38 +287,38 @@ Reports under `.quota-reports/` contain historical test results.
 }
 ```
 
-Auth users omit `ownerSubject`; API keys still must supply it. Identity, application, department membership and every restricted folder ancestor are checked exactly as before. Search only returns available files outside trash; it reads current `display_name`, current-version `original_name` cached on the document and `tags`. A document's display name/tags may intentionally remain unchanged when publishing a new version. Old version names, file contents, folder/department names and OCR text are not searched.
+บัญชี Supabase Auth ละ `ownerSubject` ได้ ผู้เรียกด้วย API key ต้องระบุ ระบบตรวจบัญชี แอปพลิเคชัน สิทธิ์ในหน่วยงาน และโฟลเดอร์ระดับบนทุกชั้นที่จำกัดสิทธิ์ ค้นได้เฉพาะไฟล์ที่พร้อมใช้งานและอยู่นอกถังขยะ โดยใช้ `display_name` ปัจจุบัน, `original_name` ของเวอร์ชันปัจจุบันที่บันทึกไว้บนเอกสาร และ `tags` ชื่อแสดงผลและแท็กอาจคงค่าเดิมเมื่อเผยแพร่เวอร์ชันใหม่ การค้นหาครั้งนี้ไม่ครอบคลุมชื่อเวอร์ชันเก่า เนื้อหาไฟล์ ชื่อโฟลเดอร์หรือหน่วยงาน และข้อความจาก OCR
 
-All whitespace-separated terms must match, but can match different fields and different tags: `งบ 2569` matches a file named `งบการเงิน.pdf` tagged `2569`. Matching is case-insensitive and allows literal substrings in Thai/English. Whitespace is trimmed/collapsed; there is no automatic Thai word segmentation, stemming, fuzzy matching, Boolean syntax or phrase-quote syntax. `%`, `_`, backslash and quotes are treated as literal text, not caller-controlled SQL/wildcards. Existing `tag` remains an exact, case-sensitive filter in addition to keyword matching.
+ทุกคำที่คั่นด้วยช่องว่างต้องพบอย่างน้อยหนึ่งครั้ง โดยอาจอยู่คนละฟิลด์หรือคนละแท็ก เช่น `งบ 2569` พบไฟล์ชื่อ `งบการเงิน.pdf` ที่มีแท็ก `2569` ระบบค้นจากส่วนหนึ่งของข้อความไทยหรืออังกฤษโดยไม่แยกตัวพิมพ์ใหญ่เล็ก จากนั้นตัดช่องว่างหัวท้ายและรวมช่องว่างติดกัน ระบบไม่ตัดคำไทย หารากศัพท์ หาคำใกล้เคียง รองรับตัวดำเนินการบูลีน หรือค้นวลีด้วยเครื่องหมายคำพูด อักขระ `%`, `_`, แบ็กสแลช และเครื่องหมายคำพูดถือเป็นข้อความตามตัวอักษร ตัวกรอง `tag` เดิมยังจับคู่แบบตรงค่าและแยกตัวพิมพ์ใหญ่เล็ก
 
-An omitted/null/blank `q` preserves the old listing behavior. Other types, normalized values over 200 UTF-16 code units or more than 10 whitespace-separated terms return `400 invalid_search_query`. The existing 4096-byte request-body limit still applies. SQL uses parameters and literal `ILIKE` patterns; no keyword is inserted into SQL text or audit details.
+เมื่อไม่ส่ง `q` หรือส่งค่า null หรือข้อความว่าง ระบบจะแสดงรายการตามเดิม ถ้าชนิดข้อมูลไม่ถูกต้อง ข้อความหลังจัดรูปแบบเกิน 200 หน่วยรหัส UTF-16 หรือมีคำที่คั่นด้วยช่องว่างเกิน 10 คำ จะได้ `400 invalid_search_query` คำขอยังจำกัดขนาดเนื้อหาไว้ที่ 4,096 ไบต์ SQL ใช้พารามิเตอร์และรูปแบบ `ILIKE` ที่ตีความคำค้นเป็นข้อความตามตัวอักษร จึงไม่แทรกคำค้นลงในคำสั่ง SQL หรือรายละเอียดประวัติการใช้งาน
 
-The response stays `{ "data": { "items": [...], "nextCursor": "..." } }` with `Cache-Control: no-store`, ordered by creation time descending then ID descending. Default page size is 25, maximum 100. Pass `nextCursor` back unchanged with the same applied keyword, filters and identity. Keyword cursors contain a SHA-256 fingerprint of the normalized criteria and authenticated scope (including user/API key ID); changing criteria/identity or supplying an old keyword-free cursor with a keyword returns `400 invalid_cursor`. Keyword-free clients retain legacy cursors. The fingerprint is a consistency check, not authorization or a signed token: every page still rechecks access. Results are not a transaction-wide snapshot; concurrent renames/moves/uploads can change membership, so start a new search to refresh.
+คำตอบยังเป็น `{ "data": { "items": [...], "nextCursor": "..." } }` พร้อม `Cache-Control: no-store` ระบบเรียงตามเวลาสร้างจากใหม่ไปเก่า แล้วเรียงตาม ID จากมากไปน้อย ค่าเริ่มต้นคือ 25 รายการต่อหน้าและสูงสุด 100 รายการ เมื่อขอหน้าถัดไป ให้ส่ง `nextCursor` กลับโดยคงค่าเดิม พร้อมคำค้น ตัวกรอง และผู้เรียกรายเดิม เคอร์เซอร์แบบคำค้นมีค่า SHA-256 ของเงื่อนไขที่จัดรูปแบบแล้วและขอบเขตของผู้เรียก รวม ID ของผู้ใช้หรือ API key การเปลี่ยนเงื่อนไขหรือผู้เรียก หรือใช้เคอร์เซอร์แบบไม่ระบุคำค้นร่วมกับคำค้น จะได้ `400 invalid_cursor` ไคลเอนต์ที่ไม่ระบุคำค้นยังใช้เคอร์เซอร์แบบเดิมได้ ค่าแฮชใช้ตรวจความสอดคล้องเท่านั้น ทุกหน้าตรวจสิทธิ์อีกครั้ง ผลลัพธ์ไม่ได้ตรึงไว้ตลอดการค้นหา หากมีการเปลี่ยนชื่อ ย้าย หรืออัปโหลดไฟล์พร้อมกัน ให้ค้นใหม่เพื่อดูรายการล่าสุด
 
-The file workspace has **ค้นหาชื่อไฟล์หรือ tags**, an explicit **ค้นหา** button/Enter and an indicator of the applied keyword. Typing alone makes no request. Search and **ใช้ตัวกรอง** apply the same draft keyword/filter values; **โหลดไฟล์เพิ่ม** and retry use applied criteria rather than unsent edits. **ล้างคำค้น** preserves applied metadata filters; **ล้างทั้งหมด** clears keyword/extra filters while retaining the current department/folder. Searching within a folder does not recurse into its children. Keyword results contain files only; the sidebar still allows folder navigation. New searches reset pagination, and stale responses cannot replace newer query/scope results. Loaded counts are not presented as total result counts.
+หน้าเอกสารมีช่อง **ค้นหาชื่อไฟล์หรือ tags** ปุ่ม **ค้นหา** ที่กด Enter ได้ และตัวบอกคำค้นที่ใช้อยู่ ระบบจะส่งคำขอเมื่อยืนยันการค้นหา ทั้งปุ่มค้นหาและ **ใช้ตัวกรอง** ใช้ค่าคำค้นและตัวกรองที่กำลังแก้ ส่วน **โหลดไฟล์เพิ่ม** และการลองใหม่ใช้เงื่อนไขที่ยืนยันแล้ว **ล้างคำค้น** จะคงตัวกรองเดิม ส่วน **ล้างทั้งหมด** ล้างคำค้นกับตัวกรองเพิ่มเติมโดยคงหน่วยงานและโฟลเดอร์ปัจจุบัน การค้นหาภายในโฟลเดอร์ไม่ลงไปในโฟลเดอร์ลูก ผลลัพธ์แสดงเฉพาะไฟล์และยังใช้เมนูด้านข้างไปยังโฟลเดอร์ได้ เมื่อเริ่มค้นใหม่ ระบบรีเซ็ตการแบ่งหน้าและป้องกันคำตอบเก่าทับผลตามคำค้นหรือขอบเขตล่าสุด จำนวนที่โหลดแสดงเฉพาะรายการที่โหลดมาแล้ว
 
-Search reads metadata directly, so metadata changes and successful version publication/restore are searchable immediately. This release adds no schema, extension, index, search service, extraction worker or backfill. It uses existing scoped listing indexes. A rollback-only fixture with 5,000 additional files measured approximately 209 ms for PostgreSQL execution on the initial test run (not end-to-end API latency or a performance guarantee); inspect the recorded EXPLAIN baseline before planning larger-scale indexing.
+ระบบค้นจากข้อมูลกำกับไฟล์โดยตรง จึงค้นพบค่าที่แก้ไขหรือเวอร์ชันที่เผยแพร่หรือกู้คืนสำเร็จได้ทันที รุ่นนี้ใช้ดัชนีสำหรับแสดงรายการตามขอบเขตเดิม โดยไม่ได้เพิ่มโครงสร้างฐานข้อมูล ส่วนขยาย ดัชนี บริการค้นหา worker แยกเนื้อหา หรือการเติมข้อมูลย้อนหลัง การทดสอบครั้งแรกด้วยข้อมูลจำลองที่เพิ่ม 5,000 ไฟล์และย้อนการแก้ไขทั้งหมดวัดเวลาประมวลผลใน PostgreSQL ได้ราว 209 มิลลิวินาที ตัวเลขนี้วัดเฉพาะเวลาฐานข้อมูล ใช้แผน `EXPLAIN` ที่บันทึกไว้ประกอบการวางดัชนีสำหรับข้อมูลปริมาณมากขึ้น
 
 
-The database check uses isolated TEMP tables and a TEMP copy of the existing folder-visibility function, rolls everything back, and prints EXPLAIN timings. It covers literal matching/injection, criteria-bound cursors, legacy clients, tenant/application/owner/folder isolation and current metadata. The UI check uses mocked Auth/APIs and Playwright with installed Chrome at 1440px/390px. It expects a running test server on `http://localhost:3017` (override `SEARCH_UI_URL`), and uses `PLAYWRIGHT_MODULE` / `SEARCH_UI_BROWSER` overrides or the same ignored test runtime as quota UI tests. Screenshots are saved to `.quota-reports/search-ui/`. Tests do not change real files or permissions.
+ชุดตรวจฐานข้อมูลใช้ตารางชั่วคราวแบบ `TEMP` และสำเนาชั่วคราวของฟังก์ชันตรวจสิทธิ์โฟลเดอร์ ย้อนการเปลี่ยนแปลงทั้งหมด และแสดงเวลาจาก `EXPLAIN` ครอบคลุมการค้นตามอักขระจริง การป้องกัน SQL injection เคอร์เซอร์ที่ผูกกับเงื่อนไข ไคลเอนต์เดิม การแยกองค์กร/แอปพลิเคชัน/เจ้าของ/โฟลเดอร์ และข้อมูลกำกับไฟล์ล่าสุด ชุดตรวจหน้าจอใช้ Auth และ API จำลองกับ Playwright และ Chrome ที่ติดตั้งไว้ ที่ความกว้าง 1440 และ 390 พิกเซล ต้องเปิดเว็บทดสอบที่ `http://localhost:3017` หรือเปลี่ยนด้วย `SEARCH_UI_URL` ใช้ `PLAYWRIGHT_MODULE` และ `SEARCH_UI_BROWSER` เพื่อระบุเครื่องมือ หรือใช้สภาพแวดล้อมทดสอบที่ Git ละเว้นชุดเดียวกับการทดสอบหน้าโควตา ภาพหน้าจอบันทึกไว้ที่ `.quota-reports/search-ui/` การทดสอบไม่แก้ไฟล์หรือสิทธิ์จริง
 
-## Department quota rollout — backfill and reconciliation
+## โควตาพื้นที่รายหน่วยงาน การเติมข้อมูลย้อนหลังและตรวจสอบยอด
 
-New uploads (including batch), version uploads and version restores now reserve bytes and settle actual stored bytes in the same database transaction as their file/version changes and audit records. Completed retries do not charge twice. Requests denied for capacity return `409 department_quota_exceeded`; batch requests preserve the existing partial-success format with a per-file error code.
+การอัปโหลดไฟล์ใหม่ทั้งแบบเดี่ยวและแบบชุด การอัปโหลดเวอร์ชัน และการกู้คืนเวอร์ชัน จะจองพื้นที่และบันทึกยอดตามจำนวนไบต์ที่จัดเก็บจริงในธุรกรรมเดียวกับการแก้ไฟล์หรือเวอร์ชันและบันทึกประวัติการใช้งาน การส่งซ้ำหลังงานสำเร็จจะไม่คิดยอดซ้ำ เมื่อพื้นที่ไม่พอ ระบบจะตอบ `409 department_quota_exceeded` ส่วนการอัปโหลดแบบชุดยังคืนผลสำเร็จบางรายการและรหัสข้อผิดพลาดแยกตามไฟล์
 
-The caller must supply the correct file size. Actual bytes above the reservation are charged as observed but quarantined with `409 upload_size_exceeds_reservation`; the previous current version remains selected. Per-file size violations still return `413 file_too_large`. Failed restore reservations and rejected objects stay `release_pending` until the cleanup worker confirms object deletion or absence; a failed/expired operation does not automatically return quota.
+ผู้เรียกต้องระบุขนาดไฟล์ที่ถูกต้อง หากไฟล์จริงใหญ่กว่าที่จอง ระบบคิดพื้นที่ตามขนาดที่ตรวจพบและกักไฟล์ไว้ด้วย `409 upload_size_exceeds_reservation` โดยคงเวอร์ชันปัจจุบันเดิมไว้ หากเกินเพดานรายไฟล์ จะได้ `413 file_too_large` พื้นที่จองของการกู้คืนที่ล้มเหลวและไฟล์ที่ถูกปฏิเสธจะคงสถานะ `release_pending` จน worker ยืนยันว่าลบวัตถุแล้วหรือไม่มีอยู่ในที่จัดเก็บ การล้มเหลวหรือหมดอายุเพียงอย่างเดียวไม่คืนโควตา
 
-Cleanup and permanent-purge workers now release used/reserved bytes only after Storage removal succeeds. Allocation release, counters, job completion and audit records commit together. Retries cannot release the same allocation twice. Moving a file to trash and restoring it do not release or reserve space. Permanent purge verifies removal of every version and outstanding allocation before releasing the file's accounting; it waits for outstanding upload/restore grants to expire first.
+worker ที่ล้างไฟล์ค้างและลบถาวรจะคืนพื้นที่ใช้แล้วและพื้นที่จองหลังลบจาก Storage สำเร็จ การคืนพื้นที่ การปรับยอด การปิดงาน และบันทึกประวัติการใช้งานเกิดในธุรกรรมเดียวกัน การลองใหม่ไม่คืนพื้นที่รายการเดิมซ้ำ การย้ายลงถังขยะหรือกู้คืนจากถังขยะไม่เปลี่ยนยอดพื้นที่ ก่อนลบถาวร ระบบรอให้สิทธิ์อัปโหลดหรือกู้คืนที่ค้างอยู่หมดอายุ และยืนยันการลบทุกเวอร์ชันและจัดการพื้นที่ที่ยังบันทึกไว้ก่อนคืนยอดของไฟล์นั้น
 
-Changing a file's department through the metadata endpoint transfers all outstanding allocations, including historical versions and pending upload/restore reservations. The destination must have capacity for both used and reserved bytes; otherwise the entire move returns `409 department_quota_exceeded` without changing the file. Transfers and worker releases lock the parent file and quota rows consistently, including a move while Storage removal is in progress. Object keys stay unchanged, and previously released allocation history retains its original department. If an initialized quota is involved but historical objects lack allocations, the move fails with `503 quota_accounting_not_ready` until backfill covers them.
+เมื่อย้ายไฟล์ข้ามหน่วยงานผ่าน API แก้ไขข้อมูลกำกับไฟล์ ระบบโอนยอดพื้นที่ที่ยังค้างทั้งหมด รวมเวอร์ชันเก่าและพื้นที่จองสำหรับอัปโหลดหรือกู้คืน ปลายทางต้องมีพื้นที่พอสำหรับยอดใช้แล้วและยอดจอง หากไม่พอ การย้ายทั้งรายการจะถูกปฏิเสธด้วย `409 department_quota_exceeded` การโอนและการคืนพื้นที่จาก worker ล็อกแถวไฟล์หลักและแถวโควตาตามลำดับเดียวกัน แม้ย้ายไฟล์ระหว่างที่กำลังลบใน Storage คีย์วัตถุยังคงเดิม และประวัติพื้นที่ที่คืนไปแล้วยังอ้างถึงหน่วยงานเดิม หากหน่วยงานที่ตั้งระบบบัญชีพื้นที่แล้วมีวัตถุเก่าที่ขาดรายการพื้นที่ การย้ายจะได้ `503 quota_accounting_not_ready` จนกว่าจะเติมข้อมูลย้อนหลังครบ
 
-The initial backfill on 2026-11-02 verified all three existing departments against Storage and initialized their accounting. Limits remain unlimited (`limit_bytes=NULL`) until a Tenant Admin changes them. Newly created or unverified departments still return `pending_backfill` with unknown totals. A finite limit on uninitialized accounting fails closed with `503 quota_accounting_not_ready`. The **พื้นที่จัดเก็บ** screen and quota endpoints below provide scoped usage and limit management. Restart the API and outbox worker after installing these changes; this step needs no additional migration.
+การเติมข้อมูลครั้งแรกเมื่อ 2026-11-02 ตรวจเทียบกับ Storage ครบทั้งสามหน่วยงานเดิมและตั้งยอดพื้นที่เริ่มต้นแล้ว ค่าเพดานเป็นไม่จำกัด (`limit_bytes=NULL`) จนกว่า Tenant Admin จะเปลี่ยน หน่วยงานที่เพิ่งสร้างหรือยังไม่ได้ตรวจจะได้ `pending_backfill` และยังไม่ทราบยอดรวม การตั้งเพดานแบบจำกัดก่อนเริ่มระบบบัญชีพื้นที่จะถูกปฏิเสธด้วย `503 quota_accounting_not_ready` หน้า **พื้นที่จัดเก็บ** และ API ด้านล่างใช้ดูยอดและตั้งเพดานตามสิทธิ์ หลังติดตั้งการเปลี่ยนแปลงนี้ ให้เริ่ม API และ outbox worker ใหม่ โดยขั้นตอนนี้ไม่ต้องรันสคริปต์ปรับฐานข้อมูลเพิ่ม
 
-This step does not enforce a physical hard cap on direct signed uploads; publication is validated at complete, and bucket limits plus cleanup still apply.
+การอัปโหลดโดยตรงผ่านลิงก์ที่ลงลายเซ็นยังอยู่ภายใต้เพดานของ bucket ระบบตรวจขนาดและโควตาในขั้นตอนยืนยันก่อนเปิดให้ใช้งานไฟล์ และล้างไฟล์ค้างตามขั้นตอนเดิม
 
-### Backfill and reconciliation commands
+### คำสั่งเติมข้อมูลย้อนหลังและตรวจสอบยอด
 
-Both commands default to report-only: they inspect SQL and Storage but do not change database rows or Storage objects. They save a JSON report in `.quota-reports/` (ignored by Git) containing identifiers, object keys, decimal byte totals and issue codes; never credentials, tokens, signed URLs, file contents or user emails. Treat these operational reports as private.
+ทั้งสองคำสั่งเริ่มในโหมดออกรายงาน ตรวจ SQL และ Storage โดยไม่แก้แถวในฐานข้อมูลหรือวัตถุใน Storage รายงาน JSON อยู่ใน `.quota-reports/` ซึ่ง Git ละเว้น ภายในมีรหัสอ้างอิง คีย์วัตถุ จำนวนไบต์ในรูปเลขฐานสิบ และรหัสปัญหา โดยไม่มีข้อมูลรับรอง โทเคน ลิงก์ที่ลงลายเซ็น เนื้อหาไฟล์ หรืออีเมลผู้ใช้ เก็บรายงานเหล่านี้เป็นข้อมูลภายใน
 
 ```powershell
 npm.cmd run quota:backfill
@@ -328,39 +328,39 @@ npm.cmd run quota:backfill -- --apply
 npm.cmd run quota:reconcile -- --apply
 ```
 
-With no tenant/application filters, exactly one active application must exist. `--department-id` is optional; inventory still covers the whole application so an unowned object cannot be silently attributed to another department. The scripts use the dedicated `DATABASE_URL` login and server-side Storage credentials; they reject the `postgres` login and need no additional grants.
+หากไม่กรององค์กรหรือแอปพลิเคชัน ต้องมีแอปพลิเคชันที่ใช้งานอยู่เพียงหนึ่งรายการ `--department-id` เป็นตัวเลือก แต่ระบบยังตรวจรายการทั้งแอปพลิเคชันเพื่อป้องกันการนับวัตถุที่หาเจ้าของไม่ได้ให้หน่วยงานอื่น สคริปต์ใช้บัญชีเฉพาะจาก `DATABASE_URL` และข้อมูลรับรอง Storage ฝั่งเซิร์ฟเวอร์ ปฏิเสธบัญชี `postgres` และไม่ต้องเพิ่มสิทธิ์
 
-Backfill deduplicates file/current-version references by `(bucket_id, object_key)`, includes every historical version and recoverable trash, and verifies object sizes using Storage API `info`. It scans the configured `STORAGE_BUCKET` plus buckets referenced by files in the selected application, with recursive pagination. Buckets outside that managed set are not covered. Missing allocations are created without changing files, versions, keys or objects. Available objects become `stored`; live pending intents retain reservations even if bytes are already present. Failed operations keep their existing debt, or acquire conservative `release_pending` accounting, until cleanup confirms removal. Confirmed purged/cleaned objects retain zero-balance `released` history. Expiry alone never releases quota.
+การเติมข้อมูลย้อนหลังรวมรายการอ้างอิงซ้ำจากไฟล์และเวอร์ชันปัจจุบันให้เหลือรายการเดียวตาม `(bucket_id, object_key)` รวมเวอร์ชันเก่าทั้งหมดและไฟล์ในถังขยะที่ยังกู้คืนได้ และตรวจขนาดวัตถุด้วย Storage API `info` ระบบตรวจ `STORAGE_BUCKET` ที่ตั้งไว้และ bucket ที่ไฟล์ในแอปพลิเคชันอ้างถึง โดยไล่รายการในแต่ละระดับและแบ่งหน้า ขอบเขตจำกัดเฉพาะ bucket เหล่านี้ ระบบสร้างรายการพื้นที่ที่ขาดโดยคงไฟล์ เวอร์ชัน คีย์ และวัตถุเดิม วัตถุที่พร้อมใช้จะถูกนับเป็น `stored` งานที่รออยู่และยังมีผลจะคงการจองแม้จัดเก็บไฟล์แล้ว งานที่ล้มเหลวจะคงพื้นที่ที่บันทึกไว้หรือเพิ่มรายการ `release_pending` ตามหลักระมัดระวังจนยืนยันการลบ รายการที่ยืนยันแล้วว่าลบหรือเก็บกวาดสำเร็จจะเก็บประวัติ `released` โดยมียอดเป็นศูนย์ การหมดอายุเพียงอย่างเดียวไม่คืนโควตา
 
-Reconciliation compares references, allocations, counters and Storage. Missing/size-mismatched objects, wrong allocation ownership, invalid paths, incomplete inventory and orphan objects block the affected department. An object whose department cannot be identified blocks the selected application. No object is deleted and no file metadata is repaired automatically. `reconcile --apply` only repairs totals/initialization when the ledger is complete and verified; use backfill to add missing allocations. Counter drift alone is repairable. Already initialized departments retain their prior status on inspection failure; the report must still be resolved before relying on their totals.
+การตรวจสอบยอดเทียบข้อมูลอ้างอิง รายการพื้นที่ ยอดรวม และ Storage หากวัตถุหาย ขนาดไม่ตรง ระบุเจ้าของพื้นที่ผิด เส้นทางไม่ถูกต้อง ตรวจรายการไม่ครบ หรือพบวัตถุที่ไม่มีรายการอ้างอิง หน่วยงานที่เกี่ยวข้องจะไม่ผ่าน หากระบุหน่วยงานของวัตถุไม่ได้ แอปพลิเคชันที่เลือกจะไม่ผ่าน ระบบคงวัตถุและข้อมูลกำกับไฟล์ไว้ `reconcile --apply` ปรับได้เฉพาะยอดและสถานะเริ่มต้นเมื่อยืนยันว่าบัญชีพื้นที่ครบถ้วน ใช้การเติมข้อมูลย้อนหลังเพื่อเพิ่มรายการที่ขาด หากมีเพียงยอดรวมคลาดเคลื่อน ระบบแก้ได้ หน่วยงานที่เริ่มใช้งานโควตาแล้วจะคงสถานะเดิมเมื่อตรวจไม่สำเร็จ ให้แก้ข้อผิดพลาดในรายงานก่อนใช้ยอดดังกล่าว
 
-### Maintenance and applying a report
+### การพักระบบและนำผลตรวจไปใช้
 
-1. Restart **every** API and worker instance with the new code before the first apply. Do not run old workers, direct SQL writers or dashboard Storage mutations during maintenance.
-2. `--apply` creates `.quota-reports/maintenance.lock`, immediately blocks new file/folder/department mutations with `503 storage_maintenance` and `Retry-After: 60`, and waits up to two minutes for registered in-flight API/worker work to finish. Search, metadata reads, preview/download grants, login and audit reads remain usable. The worker pauses cleanup/purge without consuming new jobs; audit retention can continue.
-3. Storage is inspected outside transactions. Before each department commits, the script rechecks SQL/Storage snapshots, locks parent files before quota rows and validates the snapshot again. It inserts missing allocations, updates counters and `initialized_at`, and writes Audit atomically. A failed department rolls back; previously committed departments remain valid. A repeat apply with no changes is a no-op.
-4. The script releases its maintenance lock in `finally`, including errors. Rerun report-only reconciliation afterwards. Exit code `0` means inspection/apply completed, `2` means departments were blocked or failed, and `1` means a command/configuration failure. Do not turn on finite limits until the relevant department passes reconciliation.
+1. เริ่ม API และ worker **ทุกอินสแตนซ์** ใหม่ด้วยโค้ดรุ่นนี้ก่อนใช้คำสั่งที่แก้ยอดครั้งแรก ระหว่างพักระบบ ให้หยุด worker รุ่นเก่า การเขียน SQL โดยตรง และการแก้ไข Storage ผ่านหน้า Dashboard
+2. `--apply` สร้าง `.quota-reports/maintenance.lock` และปฏิเสธคำขอใหม่ที่แก้ไฟล์ โฟลเดอร์ หรือหน่วยงานทันทีด้วย `503 storage_maintenance` พร้อม `Retry-After: 60` ระบบรอสูงสุดสองนาทีให้งาน API และ worker ที่ลงทะเบียนไว้เสร็จ การค้นหา อ่านข้อมูลกำกับไฟล์ ขอลิงก์ดูตัวอย่างหรือดาวน์โหลด เข้าสู่ระบบ และอ่านประวัติการใช้งานยังทำได้ worker พักงานเก็บกวาดและลบถาวรโดยไม่หยิบงานใหม่ แต่ยังทำงานจัดการอายุประวัติการใช้งานได้
+3. ระบบตรวจ Storage นอกธุรกรรม ก่อนบันทึกแต่ละหน่วยงาน สคริปต์จะตรวจสภาพข้อมูลจาก SQL และ Storage ล็อกแถวไฟล์หลักก่อนแถวโควตา และตรวจข้อมูลซ้ำ จากนั้นเพิ่มรายการพื้นที่ที่ขาด ปรับยอดและ `initialized_at` และเขียนประวัติการใช้งานในธุรกรรมเดียวกัน หน่วยงานที่ล้มเหลวจะย้อนเฉพาะรายการของตัวเอง หน่วยงานที่บันทึกสำเร็จไปแล้วยังคงมีผล การรันซ้ำเมื่อข้อมูลเท่าเดิมจะไม่แก้ข้อมูล
+4. สคริปต์ปลดล็อกใน `finally` ทั้งกรณีสำเร็จและผิดพลาด จากนั้นให้ตรวจสอบยอดในโหมดออกรายงานอีกครั้ง รหัสออก `0` หมายถึงตรวจหรือบันทึกสำเร็จ `2` หมายถึงมีหน่วยงานถูกระงับหรือล้มเหลว และ `1` หมายถึงคำสั่งหรือการตั้งค่าผิดพลาด เปิดใช้เพดานโควตาเมื่อหน่วยงานนั้นผ่านการตรวจยอดแล้ว
 
-The automatic lock and active-request leases are filesystem based, shared by API, worker and CLI in this local project. `STORAGE_QUOTA_CONTROL_DIR` can select an absolute shared control/report directory; all processes must use the same location. On multiple hosts, put **all** instances into maintenance and drain them before applying; a local lock cannot pause a remote instance. `STORAGE_QUOTA_MAINTENANCE=1` also blocks mutations/worker deletion, but changing that environment variable requires restarting existing processes. Remove the flag and restart them to resume.
+ล็อกและสิทธิ์ชั่วคราวของงานที่กำลังทำใช้ระบบไฟล์ร่วมกันระหว่าง API, worker และ CLI ในเครื่อง `STORAGE_QUOTA_CONTROL_DIR` ใช้กำหนดพาธเต็มของโฟลเดอร์ควบคุมและรายงาน ทุกโปรเซสต้องใช้ตำแหน่งเดียวกัน หากรันหลายเครื่อง ให้พักและรอให้งานใน **ทุกอินสแตนซ์** จบก่อนบันทึกผล เพราะล็อกในเครื่องมีผลเฉพาะเครื่องนั้น `STORAGE_QUOTA_MAINTENANCE=1` ระงับคำขอแก้ข้อมูลและการลบโดย worker เช่นกัน หลังเปลี่ยนค่าตัวแปรนี้ต้องเริ่มโปรเซสที่รันอยู่ใหม่ เมื่อต้องการคืนระบบ ให้เอาค่านี้ออกแล้วเริ่มโปรเซสใหม่
 
-Previously issued signed upload URLs can still upload directly during maintenance. Pending allocations stay reserved; completion and cleanup resume afterwards. Never infer that bytes are gone from an expired grant alone. After an abnormal termination, the lock deliberately remains fail-closed: inspect its PID/owner, confirm that process and in-flight work have stopped, then remove only the stale `maintenance.lock` and rerun. Live-process leases are never expired automatically; crashed-process leases are removed on the next maintenance acquisition.
+ลิงก์อัปโหลดที่ออกไว้ก่อนหน้ายังส่งไฟล์เข้า Storage โดยตรงได้ระหว่างพักระบบ รายการพื้นที่ที่รออยู่ยังคงจองไว้ ระบบกลับมายืนยันและเก็บกวาดไฟล์หลังคืนระบบ การหมดอายุของลิงก์ไม่ได้ยืนยันว่าไฟล์ถูกลบ หากโปรเซสจบผิดปกติ ระบบจะคงล็อกไว้ ให้ตรวจ PID และเจ้าของล็อก ยืนยันว่าโปรเซสและงานที่กำลังทำหยุดแล้ว จากนั้นลบเฉพาะ `maintenance.lock` ที่ค้างและรันใหม่ สิทธิ์ชั่วคราวของโปรเซสที่ยังทำงานจะไม่หมดอายุเอง ส่วนของโปรเซสที่ล้มจะถูกล้างเมื่อเข้าพักระบบครั้งถัดไป
 
-Initial applied totals (2026-11-02; subsequent file operations change them): BA `265476` bytes, IT `321751` bytes, General `1145002` bytes; reservations were zero in each department. Reports record each run and transactional audit events use `storage.quota_backfilled` / `storage.quota_reconciled`. Reconciliation is not scheduled automatically, and neither backfill nor reconciliation is exposed through the web UI.
+ยอดเริ่มต้นหลังบันทึกเมื่อ 2026-11-02 คือ BA `265476` ไบต์, IT `321751` ไบต์ และ General `1145002` ไบต์ ทุกหน่วยงานไม่มีพื้นที่จองในเวลานั้น การใช้งานไฟล์หลังจากนั้นทำให้ยอดเปลี่ยนได้ รายงานบันทึกผลแต่ละครั้ง และเหตุการณ์ในประวัติการใช้งานใช้ชื่อ `storage.quota_backfilled` และ `storage.quota_reconciled` การตรวจยอดไม่มีรอบทำงานอัตโนมัติ และหน้าเว็บไม่มีคำสั่งเติมข้อมูลย้อนหลังหรือตรวจสอบยอด
 
-### Storage quota API and screen
+### API โควตาและหน้าพื้นที่จัดเก็บ
 
-Open **พื้นที่จัดเก็บ** from the desktop sidebar or **พื้นที่** from mobile navigation. Its department filter is independent of the file/folder workspace. Desktop tables and mobile cards show used bytes, reserved bytes, limit, available capacity and last refresh time. Used space includes every retained version and recoverable trash; it is returned only after the worker confirms physical deletion. Pending backfill values are unknown (`null`), not zero. An unlimited limit has no artificial percentage. Finite status uses used + reserved: normal, near full at 80%, full at the limit, and over quota above it.
+เปิด **พื้นที่จัดเก็บ** จากเมนูด้านข้างบนเดสก์ท็อป หรือ **พื้นที่** จากเมนูมือถือ ตัวกรองหน่วยงานแยกจากหน้าเอกสารและโฟลเดอร์ ตารางบนเดสก์ท็อปและการ์ดบนมือถือแสดงพื้นที่ที่ใช้แล้ว พื้นที่จอง เพดาน พื้นที่คงเหลือ และเวลาที่โหลดข้อมูลล่าสุด พื้นที่ใช้แล้วรวมทุกเวอร์ชันที่ยังเก็บไว้และไฟล์ในถังขยะที่ยังกู้คืนได้ คืนพื้นที่หลัง worker ยืนยันการลบจริง ยอดที่รอเติมข้อมูลย้อนหลังแสดงเป็น `null` และยังไม่ทราบค่า เมื่อไม่จำกัดพื้นที่ ระบบจะไม่แสดงเปอร์เซ็นต์สมมติ เมื่อมีเพดาน สถานะจะอิงยอดใช้แล้วรวมยอดจอง โดยเริ่มใกล้เต็มที่ 80% ขึ้นสถานะเต็มเมื่อถึงเพดาน และเกินโควตาเมื่อสูงกว่าเพดาน
 
-| Caller | Read usage | Set limits |
+| ผู้เรียก | ดูยอดใช้พื้นที่ | ตั้งเพดาน |
 |---|---|---|
-| Tenant Admin signed in through Supabase Auth | Every active department in their tenant/application | Yes |
-| Department Admin / Editor | Their Editor/Admin departments | No |
-| API key with `files:read` | Its Editor/Admin departments | No, including management keys |
-| Viewer | No quota items; menu hidden | No |
+| Tenant Admin ที่เข้าสู่ระบบผ่าน Supabase Auth | ทุกหน่วยงานที่ยังใช้งานในองค์กรและแอปพลิเคชันของตน | ได้ |
+| ผู้ดูแลหน่วยงานหรือ Editor | หน่วยงานที่ตนมีบทบาท Editor หรือ Admin | ไม่ได้ |
+| API key ที่มี `files:read` | หน่วยงานที่คีย์มีบทบาท Editor หรือ Admin | ไม่ได้ รวมถึงคีย์จัดการ |
+| Viewer | ไม่เห็นรายการโควตาและไม่แสดงเมนู | ไม่ได้ |
 
-`GET /api/v1/departments/storage-quotas` requires a valid session/API key and `files:read`. It returns `{ "data": { "items": [...] } }`, using one scoped query. Each item includes `departmentId`, `departmentName`, `accountingStatus`, `limitBytes`, `usedBytes`, `reservedBytes`, `committedBytes`, `availableBytes`, `overQuota`, `revision` and `canManageQuota`. Bytes/revision are decimal strings. A Viewer-only identity receives an empty item list; missing read scope receives `403`. No request parameter can override the identity's tenant/application.
+`GET /api/v1/departments/storage-quotas` ต้องใช้เซสชันหรือ API key ที่ใช้ได้และมี `files:read` ระบบอ่านตามขอบเขตด้วยคำสั่งเดียวและคืน `{ "data": { "items": [...] } }` แต่ละรายการมี `departmentId`, `departmentName`, `accountingStatus`, `limitBytes`, `usedBytes`, `reservedBytes`, `committedBytes`, `availableBytes`, `overQuota`, `revision` และ `canManageQuota` จำนวนไบต์และรุ่นข้อมูลเป็นสตริงเลขฐานสิบ ผู้ที่มีเพียงบทบาท Viewer จะได้รายการว่าง ผู้ที่ไม่มีสิทธิ์อ่านจะได้ `403` พารามิเตอร์จากผู้เรียกไม่สามารถเปลี่ยนองค์กรหรือแอปพลิเคชันที่ระบบยืนยันไว้ได้
 
-`PATCH /api/v1/departments/{departmentId}/storage-quota` accepts only a Tenant Admin **user session**, with this JSON body:
+`PATCH /api/v1/departments/{departmentId}/storage-quota` รับเฉพาะ **เซสชันผู้ใช้ Tenant Admin** พร้อมเนื้อหาคำขอ JSON ดังนี้
 
 ```json
 {
@@ -369,21 +369,21 @@ Open **พื้นที่จัดเก็บ** from the desktop sidebar or 
 }
 ```
 
-Use the latest `revision` returned by GET, not the example number. `limitBytes: null` removes the cap; `"0"` is a valid finite cap when committed bytes are zero. Values must be canonical non-negative PostgreSQL bigint strings (`0` through `9223372036854775807`); numeric JSON values, fractions, negative values, exponent notation and unknown body fields receive `400`. Success returns `{ "data": <updated quota item> }`. All responses use `Cache-Control: no-store`.
+ให้ใช้ `revision` ล่าสุดจาก GET ค่า `limitBytes: null` ยกเลิกเพดาน และ `"0"` ใช้ตั้งเพดานได้เมื่อยอดใช้แล้วรวมยอดจองเป็นศูนย์ ค่าต้องเป็นสตริงเลขฐานสิบในรูปจำนวนเต็มไม่ติดลบตามช่วง PostgreSQL bigint (`0` ถึง `9223372036854775807`) หากส่งเป็นตัวเลข JSON เศษส่วน ค่าติดลบ รูปเลขยกกำลัง หรือฟิลด์ที่ไม่รองรับ จะได้ `400` เมื่อสำเร็จจะคืน `{ "data": <updated quota item> }` ทุกคำตอบใช้ `Cache-Control: no-store`
 
-The setter locks only the quota row, reads the latest revision and used/reserved bytes, and commits the limit, incremented revision and `department.quota_update` audit together. Audit contains previous/new limits and the current balances; no credentials. An unchanged value is a no-op after checking revision/readiness. Limits cannot be set below used + reserved, and finite limits require initialized accounting. Existing files are never deleted to meet a cap. Upload/restore reservations, moves and worker releases update revision too, so even a usage change can invalidate a form opened earlier.
+ระบบล็อกเฉพาะแถวโควตา อ่านรุ่นข้อมูลและยอดใช้แล้วหรือจองล่าสุด แล้วบันทึกเพดาน เพิ่มรุ่นข้อมูล และเขียนเหตุการณ์ `department.quota_update` พร้อมกัน ประวัติการใช้งานเก็บเพดานเก่าและใหม่กับยอดปัจจุบันโดยไม่มีข้อมูลรับรอง หากค่าเท่าเดิม จะตรวจรุ่นและความพร้อมแล้วคืนผลโดยไม่แก้ข้อมูล เพดานต้องไม่ต่ำกว่าพื้นที่ที่ใช้รวมพื้นที่จอง และตั้งแบบจำกัดได้เมื่อระบบบัญชีพื้นที่พร้อมแล้ว ระบบไม่ลบไฟล์เพื่อให้ยอดอยู่ใต้เพดาน การจองเพื่ออัปโหลดหรือกู้คืน การย้าย และการคืนพื้นที่จาก worker จะเปลี่ยนรุ่นข้อมูลด้วย ดังนั้นฟอร์มที่เปิดค้างไว้อาจใช้รุ่นเก่าแม้เปลี่ยนเฉพาะยอดใช้พื้นที่
 
-| Error | Meaning / recovery |
+| ข้อผิดพลาด | ความหมายและวิธีดำเนินการ |
 |---|---|
-| `401 unauthorized` | Sign in again or supply a valid key for reads. |
-| `403 department_quota_forbidden` | The caller lacks read scope/department access or is not a Tenant Admin user for writes. |
-| `404 department_quota_not_found` | The department is inactive, absent or outside the caller's tenant/application. |
-| `409 quota_revision_conflict` | Reload the latest values, review the retained input and save again. `error.details.revision` contains the latest revision. |
-| `409 quota_limit_below_committed` | Increase the limit or reduce stored bytes first. `error.details.minimumLimitBytes` is the current minimum. |
-| `503 quota_accounting_not_ready` | Complete operational backfill/reconciliation before setting a finite cap. Unlimited remains available. |
-| `503 storage_maintenance` | Mutations are paused; usage reads remain available. Retry later. |
+| `401 unauthorized` | เข้าสู่ระบบใหม่ หรือใช้คีย์ที่ยังใช้ได้สำหรับการอ่าน |
+| `403 department_quota_forbidden` | ผู้เรียกไม่มีสิทธิ์อ่านหรือเข้าถึงหน่วยงาน หรือไม่ได้เข้าสู่ระบบด้วยบัญชี Tenant Admin สำหรับการแก้ไข |
+| `404 department_quota_not_found` | หน่วยงานปิดใช้งาน ไม่มีอยู่ หรืออยู่นอกองค์กรและแอปพลิเคชันของผู้เรียก |
+| `409 quota_revision_conflict` | โหลดค่าล่าสุด ทบทวนค่าที่ฟอร์มเก็บไว้แล้วบันทึกอีกครั้ง `error.details.revision` ระบุรุ่นข้อมูลล่าสุด |
+| `409 quota_limit_below_committed` | เพิ่มเพดานหรือลดยอดพื้นที่ที่เก็บไว้ก่อน `error.details.minimumLimitBytes` คือเพดานขั้นต่ำขณะนั้น |
+| `503 quota_accounting_not_ready` | เติมข้อมูลย้อนหลังและตรวจยอดให้เรียบร้อยก่อนตั้งเพดานแบบจำกัด ยังเลือกไม่จำกัดได้ |
+| `503 storage_maintenance` | ระบบพักงานที่แก้ข้อมูล แต่ยังอ่านยอดพื้นที่ได้ ให้ลองใหม่ภายหลัง |
 
-PowerShell examples (use a Tenant Admin access token only in a trusted local terminal):
+ตัวอย่าง PowerShell ให้ใช้ access token ของ Tenant Admin เฉพาะในเทอร์มินัลของเครื่องที่เชื่อถือได้
 
 ```powershell
 $headers = @{ Authorization = "Bearer <ADMIN_ACCESS_TOKEN>" }
@@ -393,23 +393,23 @@ $body = @{ limitBytes = "10000000000"; expectedRevision = $quota.revision } | Co
 Invoke-RestMethod "http://localhost:3000/api/v1/departments/<DEPARTMENT_UUID>/storage-quota" -Method Patch -Headers $headers -ContentType "application/json" -Body $body
 ```
 
-The UI offers unlimited or bytes/MB/GB (decimal: 1 MB = 1,000,000 bytes; 1 GB = 1,000,000,000 bytes), validates on blur/submit, preserves exact values with decimal strings/BigInt and previews remaining space. A conflict reloads current values while retaining input; it never automatically resubmits. Refresh occurs on page entry, manually and after saves, without polling. There is no new schema, auth scope, email alert or usage-history chart.
+หน้าเว็บเลือกได้ระหว่างไม่จำกัดหรือระบุเป็นไบต์, MB หรือ GB แบบฐานสิบ (1 MB = 1,000,000 ไบต์, 1 GB = 1,000,000,000 ไบต์) ระบบตรวจค่าเมื่อออกจากช่องหรือกดส่ง เก็บค่าอย่างแม่นยำด้วยสตริงเลขฐานสิบหรือ BigInt และแสดงตัวอย่างพื้นที่คงเหลือ หากข้อมูลขัดกัน ระบบโหลดค่าล่าสุดและคงค่าที่กรอกไว้ให้ผู้ใช้ส่งใหม่เอง ระบบโหลดข้อมูลเมื่อเปิดหน้า เมื่อกดโหลดใหม่ และหลังบันทึก รุ่นนี้ยังใช้โครงสร้างฐานข้อมูลและสิทธิ์เดิม โดยไม่มีอีเมลเตือน กราฟประวัติการใช้พื้นที่ หรือการเรียกข้อมูลเป็นระยะ
 
-Next.js App Router API foundation for the shared File Storage Service. The project uses TypeScript, Route Handlers, PostgreSQL via `pg`, and Supabase Storage via `@supabase/supabase-js`.
+ระบบจัดเก็บไฟล์ส่วนกลางใช้ Next.js App Router, TypeScript และ Route Handlers เชื่อม PostgreSQL ผ่าน `pg` และ Supabase Storage ผ่าน `@supabase/supabase-js`
 
-Invited-user Supabase Auth setup and Tenant Admin bootstrap: [docs/SUPABASE_AUTH_SETUP.md](docs/SUPABASE_AUTH_SETUP.md).
+ดูวิธีตั้ง Supabase Auth สำหรับผู้ใช้ที่ได้รับคำเชิญและสร้าง Tenant Admin ครั้งแรกได้จาก [คู่มือตั้งค่า Supabase Auth](docs/SUPABASE_AUTH_SETUP.md)
 
-Tenant Admin audit history is available at `GET /api/v1/audit-events` and in the **ประวัติการใช้งาน** screen. Keep `npm.cmd run worker:outbox` running so audit retention executes daily. Set `AUDIT_ALERT_WEBHOOK_URL` to an HTTPS endpoint that accepts JSON to receive retention failure alerts; also monitor the worker log for `Audit retention failed`.
+Tenant Admin ดูประวัติการใช้งานได้ที่ `GET /api/v1/audit-events` และหน้า **ประวัติการใช้งาน** เปิด `npm.cmd run worker:outbox` ไว้เพื่อให้ระบบจัดการอายุประวัติทุกวัน ตั้ง `AUDIT_ALERT_WEBHOOK_URL` เป็นปลายทาง HTTPS ที่รับ JSON เพื่อรับแจ้งเตือนเมื่อการจัดการอายุประวัติล้มเหลว และติดตามข้อความ `Audit retention failed` ในบันทึกของ worker
 
-The same worker cleans up tracked incomplete uploads and restore copies every minute (up to 10 objects per cycle), after their intent expires plus a one-hour grace period. It preserves current/available versions and recoverable trash, records durable jobs in `filesvc.object_cleanup_jobs`, and retries failures. Apply migrations and restart the worker when updating; see [cleanup behavior](docs/API_DOCUMENTATION.md#cleanup-ของ-uploadrestore-ที่ค้าง). Logs beginning with `Abandoned object cleanup failed` require monitoring; this job does not send alerts via the audit-retention webhook.
+worker เดียวกันจะล้างไฟล์อัปโหลดและสำเนากู้คืนที่ค้างและมีรายการติดตาม ทุกหนึ่งนาทีสูงสุด 10 วัตถุต่อรอบ หลังสิทธิ์ของงานหมดอายุและพ้นช่วงผ่อนผันหนึ่งชั่วโมง ระบบคงเวอร์ชันปัจจุบันหรือเวอร์ชันที่พร้อมใช้และไฟล์ในถังขยะที่ยังกู้คืนได้ เก็บงานไว้ใน `filesvc.object_cleanup_jobs` และลองใหม่เมื่อผิดพลาด เมื่ออัปเดตให้รันสคริปต์ปรับฐานข้อมูลที่เกี่ยวข้องและเริ่ม worker ใหม่ ดู [วิธีเก็บกวาดไฟล์ค้าง](docs/API_DOCUMENTATION.md#cleanup-ของ-uploadrestore-ที่ค้าง) ติดตามข้อความที่ขึ้นต้นด้วย `Abandoned object cleanup failed` ในบันทึก เพราะงานนี้ไม่ส่งแจ้งเตือนผ่าน webhook ที่ใช้กับการจัดการอายุประวัติ
 
 
-## Current endpoints
+## เส้นทาง API สำหรับตรวจสถานะ
 
-- `GET /api/health/live` — process liveness; does not require credentials.
-- `GET /api/health/ready` — checks PostgreSQL connectivity and returns `503` until `DATABASE_URL` is configured and reachable.
+- `GET /api/health/live` ตรวจว่าโปรเซสยังทำงานอยู่ เรียกได้โดยไม่ต้องส่งข้อมูลรับรอง
+- `GET /api/health/ready` ตรวจการเชื่อมต่อ PostgreSQL และตอบ `503` จนกว่าจะตั้ง `DATABASE_URL` และเชื่อมต่อได้
 
-## Local development
+## การพัฒนาในเครื่อง
 
 ```bash
 npm install
@@ -417,63 +417,64 @@ Copy-Item .env.example .env.local
 npm run dev
 ```
 
-Open `http://localhost:3000/api/health/live` to check the process. Do not place real credentials in `.env.example`; `.env.local` is ignored by Git.
+เปิด `http://localhost:3000/api/health/live` เพื่อตรวจว่าโปรเซสทำงานอยู่ เก็บข้อมูลรับรองจริงใน `.env.local` ซึ่ง Git ละเว้นอยู่ และใช้ค่าตัวอย่างใน `.env.example`
 
-## Environment variables
+## ตัวแปรสภาพแวดล้อม
 
-| Variable | Purpose |
+| ตัวแปร | หน้าที่ |
 |---|---|
-| `DATABASE_URL` | PostgreSQL connection string for the Supabase project. Use a dedicated login principal that is a member of `filesvc_api`; do not use the `postgres` superuser. |
-| `WORKER_DATABASE_URL` | Separate PostgreSQL connection string for a login principal that is a member of `filesvc_worker`; used only by the outbox worker. |
-| `SUPABASE_URL` | Supabase project URL for server-side Storage operations. |
-| `SUPABASE_SECRET_KEY` | Server-only Supabase secret key. Never expose it through a `NEXT_PUBLIC_` variable or send it to clients. |
-| `STORAGE_BUCKET` | Private Storage bucket name; currently `private-files`. |
-| `MAX_UPLOAD_SIZE_BYTES` | API metadata validation limit; defaults to 25 MiB. Set the bucket's maximum file size in Supabase Storage to the same value because signed upload URLs upload directly to Storage. |
+| `DATABASE_URL` | สตริงเชื่อมต่อ PostgreSQL ของโปรเจกต์ Supabase ใช้บัญชีเฉพาะที่เป็นสมาชิกของ `filesvc_api` และหลีกเลี่ยงบัญชีผู้ดูแลสูงสุด `postgres` |
+| `WORKER_DATABASE_URL` | สตริงเชื่อมต่อ PostgreSQL แยกสำหรับบัญชีที่เป็นสมาชิกของ `filesvc_worker` ใช้เฉพาะ outbox worker |
+| `SUPABASE_URL` | URL โปรเจกต์ Supabase สำหรับงาน Storage ฝั่งเซิร์ฟเวอร์ |
+| `SUPABASE_SECRET_KEY` | คีย์ลับ Supabase สำหรับฝั่งเซิร์ฟเวอร์เท่านั้น เก็บไว้นอกตัวแปร `NEXT_PUBLIC_` และไม่ส่งให้ไคลเอนต์ |
+| `STORAGE_BUCKET` | ชื่อ bucket ส่วนตัวใน Storage ปัจจุบันคือ `private-files` |
+| `MAX_UPLOAD_SIZE_BYTES` | เพดานขนาดที่ API ใช้ตรวจข้อมูลกำกับไฟล์ ค่าเริ่มต้น 25 MiB ตั้งขนาดไฟล์สูงสุดของ bucket ใน Supabase Storage ให้เท่ากัน เพราะลิงก์อัปโหลดที่ลงลายเซ็นจะส่งไฟล์ตรงเข้า Storage |
 
-Get the PostgreSQL connection string from Supabase Dashboard → Connect. Use the connection mode supported by the local network. Keep all credentials in local environment secrets or the deployment platform's secret variables.
+ดูสตริงเชื่อมต่อ PostgreSQL จาก Supabase Dashboard → Connect เลือกโหมดเชื่อมต่อที่เครือข่ายในเครื่องรองรับ เก็บข้อมูลรับรองในตัวแปรลับของเครื่องหรือแพลตฟอร์มที่ใช้ติดตั้ง
 
-## Structure
+## โครงสร้างโปรเจกต์
 
 ```text
 src/
-  app/api/health/       liveness and readiness routes
-  application/files/    ports used by application use cases
-  domain/files/         file lifecycle model
+  app/api/health/       เส้นทางตรวจว่าโปรเซสทำงานและระบบพร้อมใช้งาน
+  application/files/    อินเทอร์เฟซที่ขั้นตอนงานของแอปพลิเคชันเรียกใช้
+  domain/files/         แบบจำลองสถานะและวงจรชีวิตไฟล์
   infrastructure/
-    database/           PostgreSQL pool and Dapper-style SQL repository
-    storage/            Supabase Storage adapter
+    database/           พูลเชื่อมต่อ PostgreSQL และชั้นจัดเก็บข้อมูลด้วย SQL แบบ Dapper
+    storage/            ตัวเชื่อมต่อ Supabase Storage
 ```
 
-File access is scoped by tenant, application, department role, and file status. Invited users see documents shared within their authorized departments; trusted server-to-server API key callers retain the owner-subject filter.
+การเข้าถึงไฟล์จำกัดตามองค์กร แอปพลิเคชัน บทบาทในหน่วยงาน และสถานะไฟล์ ผู้ใช้ที่ได้รับคำเชิญเห็นเอกสารที่แชร์ภายในหน่วยงานที่ตนมีสิทธิ์ ส่วนระบบที่เรียกด้วย API key ระหว่างเซิร์ฟเวอร์ยังต้องกรองตามเจ้าของไฟล์
 
-## Development notes
+## ข้อควรรู้สำหรับนักพัฒนา
 
-- Web and worker are deployed independently; keep runtime credentials in platform variables and follow the Railway setup above.
-- The app uses the Node.js runtime for database and Storage integrations.
-- The workspace is now using Node `24.22.1` (npm `11.19.1`), matching the project version in `.nvmrc`.
-- Next.js Route Handlers live under `src/app` and use Web `Request`/`Response` APIs.
+- ติดตั้งเว็บและ worker แยกกัน เก็บข้อมูลรับรองขณะรันในตัวแปรของแพลตฟอร์ม และใช้การตั้งค่า Railway ข้างต้น
+- แอปใช้ Node.js สำหรับเชื่อมฐานข้อมูลและ Storage
+- เครื่องพัฒนาใช้ Node `24.22.1` และ npm `11.19.1` ตรงกับรุ่นโปรเจกต์ใน `.nvmrc`
+- Next.js Route Handlers อยู่ใต้ `src/app` และใช้ Web API `Request` และ `Response`
 
-## Create an application API key
+## สร้าง API key สำหรับแอปพลิเคชัน
 
-Create keys from a trusted local terminal for initial setup or recovery. The script generates a random secret, stores only its SHA-256 hash in `filesvc.application_keys`, and prints the full key once. It defaults to a 90-day expiry; set a different period between 1 and 365 days with `--expires-in-days`. Valid scopes are `files:read`, `files:write`, and `keys:manage`.
+สร้างคีย์จากเทอร์มินัลที่เชื่อถือได้เมื่อตั้งค่าครั้งแรกหรือกู้คืนการเข้าถึง สคริปต์จะสุ่มค่าลับ เก็บเฉพาะค่าแฮช SHA-256 ใน `filesvc.application_keys` และแสดงคีย์เต็มเพียงครั้งเดียว คีย์หมดอายุใน 90 วันตามค่าเริ่มต้น ใช้ `--expires-in-days` เพื่อกำหนดระหว่าง 1–365 วัน ขอบเขตสิทธิ์ที่รองรับคือ `files:read`, `files:write` และ `keys:manage`
 
 ```powershell
 npm.cmd run key:create -- --application-id <APPLICATION_UUID> --scopes files:read,files:write,keys:manage
 ```
 
-Use the `application_id` returned when creating the application. This management key is needed to administer keys through the API. Store it in a password manager or a server-side secret store. Do not commit it, put it in a `NEXT_PUBLIC_` variable, or paste it into logs or chat. The key can be validated at `GET /api/v1/me`.
+ใช้ `application_id` ที่ได้ตอนสร้างแอปพลิเคชัน คีย์จัดการนี้ใช้จัดการคีย์ผ่าน API เก็บไว้ในโปรแกรมจัดการรหัสผ่านหรือที่เก็บค่าลับฝั่งเซิร์ฟเวอร์ อย่าใส่คีย์ใน Git, ตัวแปร `NEXT_PUBLIC_`, บันทึกระบบ หรือแชต ตรวจว่าคีย์ใช้ได้ด้วย `GET /api/v1/me`
 
-## Manage application API keys
+## จัดการ API key ของแอปพลิเคชัน
 
-Key-management endpoints require `Authorization: Bearer <MANAGEMENT_API_KEY>` with the `keys:manage` scope. Management is scoped to the caller's application and department grants. Use a trusted terminal for initial setup or recovery.
+API สำหรับจัดการคีย์ต้องส่ง `Authorization: Bearer <MANAGEMENT_API_KEY>` ด้วยคีย์ที่มี `keys:manage` ผู้เรียกจัดการได้ตามขอบเขตแอปพลิเคชันและสิทธิ์รายหน่วยงานของตน ใช้เทอร์มินัลที่เชื่อถือได้เมื่อตั้งค่าครั้งแรกหรือกู้คืนการเข้าถึง
 
-- `GET /api/v1/keys` — list key metadata including `name`, `revision`, `scopes`, `departmentGrants`, expiry, revocation and `rotatedFromKeyId`.
-- `POST /api/v1/keys` — create a key with optional `name`. Defaults to 90 days and `files:read`. Set `departmentGrants` within the caller's authority. To issue another `keys:manage` key, every grant must be `admin`.
-- `PATCH /api/v1/keys/{keyId}` — rename an active file key or replace its department roles. The existing credential and scopes continue to apply.
-- `POST /api/v1/keys/{keyId}/rotate` — replace an active file key and copy its name, scopes and department roles. The new key starts at revision `0`. Requires Admin access to every department on the key.
-- `DELETE /api/v1/keys/{keyId}` — revoke a key. A key cannot revoke itself; use a different management key to avoid locking out key administration.
+- `GET /api/v1/keys` แสดงข้อมูลคีย์ เช่น `name`, `revision`, `scopes`, `departmentGrants`, วันหมดอายุ ข้อมูลการเพิกถอน และ `rotatedFromKeyId`
+- ใช้ `?status=active` เพื่อดูคีย์ที่ยังไม่ถูกเพิกถอนและยังไม่หมดอายุหรือไม่มีวันหมดอายุ ใช้ `?status=expired` เพื่อดูคีย์ที่หมดอายุและยังไม่ถูกเพิกถอน ใช้ `?status=revoked` เพื่อดูคีย์ที่ถูกเพิกถอน รวมคีย์ที่หมดอายุแล้ว หากละ `status` ระบบจะแสดงทุกสถานะในขอบเขตที่ผู้เรียกมีสิทธิ์ หากระบุค่าที่ไม่รองรับหรือส่ง `status` ซ้ำ จะได้ `400 invalid_key_status`
+- `POST /api/v1/keys` สร้างคีย์และระบุ `name` ได้ ค่าเริ่มต้นคือ 90 วันและ `files:read` กำหนด `departmentGrants` ภายในขอบเขตที่ผู้เรียกมีสิทธิ์ การออกคีย์ที่มี `keys:manage` ต้องให้ทุกหน่วยงานในรายการมีบทบาท `admin`
+- `PATCH /api/v1/keys/{keyId}` เปลี่ยนชื่อคีย์ไฟล์ที่ยังใช้ได้หรือแทนที่รายการบทบาทรายหน่วยงาน โดยใช้ค่าคีย์และขอบเขตสิทธิ์เดิมต่อ
+- `POST /api/v1/keys/{keyId}/rotate` ออกคีย์ทดแทนให้คีย์ไฟล์ที่ยังใช้ได้ โดยคัดลอกชื่อ ขอบเขตสิทธิ์ และบทบาทรายหน่วยงาน คีย์ใหม่เริ่มที่รุ่นข้อมูล `0` ผู้เรียกต้องมีบทบาท Admin ในทุกหน่วยงานของคีย์
+- `DELETE /api/v1/keys/{keyId}` เพิกถอนคีย์ คีย์เพิกถอนตัวเองไม่ได้ ให้ใช้คีย์จัดการอีกตัวเพื่อรักษาสิทธิ์จัดการคีย์
 
-Example request body:
+ตัวอย่างเนื้อหาคำขอ
 
 ```json
 {
@@ -486,11 +487,11 @@ Example request body:
 }
 ```
 
-New key secrets are displayed only in the create response and cannot be retrieved later. Store them securely. All key-management responses disable caching.
+ค่าลับของคีย์ใหม่แสดงเพียงครั้งเดียวในคำตอบเมื่อสร้างคีย์และเรียกดูย้อนหลังไม่ได้ ให้จัดเก็บอย่างปลอดภัย คำตอบจาก API จัดการคีย์ทุกเส้นปิดการแคช
 
-### Update a file API key
+### แก้ไข API key สำหรับไฟล์
 
-In Postman, set `updateKeyId` to the file key UUID and use a Management key as the Bearer credential. Run **List API keys** to populate `keyExpectedRevision` and review the current grants. Then use **Update API key** with a body such as:
+ใน Postman ให้ตั้ง `updateKeyId` เป็น UUID ของคีย์ไฟล์และใช้คีย์จัดการเป็น Bearer token ส่ง **List API keys** เพื่ออ่าน `keyExpectedRevision` และตรวจสิทธิ์ปัจจุบัน จากนั้นส่ง **Update API key** พร้อมเนื้อหาคำขอดังตัวอย่าง
 
 ```json
 {
@@ -502,62 +503,176 @@ In Postman, set `updateKeyId` to the file key UUID and use a Management key as t
 }
 ```
 
-- `departmentGrants` replaces the full list with 1–100 unique active departments. Include every department you want to retain. Use Revoke to remove the final grant by disabling the key. A Management key with `departments:manage` can assign the first grant to a key created by the CLI. A department-scoped Management key must have `admin` in every current and requested department. A Viewer-to-Editor change only grants file writes when the key already has `files:write`.
-- For a rename, omit `departmentGrants`. Set `name` to `null` to clear it, or supply a label of 1–100 characters after trimming. Use an integration name and keep credentials out of the label. Existing keys start with `name: null` and `revision: 0`.
-- A `200` response includes the current name, revision and department grants. A real change increments the revision and records `key.update` in Audit. Grant snapshots group department IDs by role and omit UUID hyphens to fit the Audit size limit. A no-op returns the current revision. Verify the updated roles with `GET /api/v1/me` using the file key.
-- On `409 key_revision_conflict`, refresh the list and review changes before sending a new PATCH. On `409 key_rotation_overlap`, change roles on the latest replacement after every earlier active key has expired or been revoked. `409 key_not_editable` covers expired, revoked and management keys within the caller's scope. A target outside the caller's scope returns `404`. A requested department outside the caller's authority returns `403`.
-- Apply the [Rotate migration](db/migrations/20261110093652_application_key_rotation.sql) if it is absent, then apply the [metadata and roles migration](db/migrations/20261116051020_application_key_metadata_and_roles.sql) to the test database before deploying the web build. The pre-deploy check verifies both migrations and the API privileges. Repeat on Production when releasing. An application rollback can keep the additive columns and stored metadata.
+- `departmentGrants` แทนที่รายการสิทธิ์ทั้งหมดและต้องมีหน่วยงานที่ใช้งานอยู่ 1–100 แห่งโดยไม่ซ้ำกัน ใส่ทุกหน่วยงานที่ต้องการคงสิทธิ์ไว้ หากต้องการถอดสิทธิ์หน่วยงานสุดท้าย ให้เพิกถอนคีย์ผ่าน **Revoke** คีย์จัดการที่มี `departments:manage` เพิ่มสิทธิ์หน่วยงานแรกให้คีย์ที่สร้างผ่าน CLI ได้ คีย์จัดการที่จำกัดตามหน่วยงานต้องมี `admin` ในทุกหน่วยงานทั้งในรายการเดิมและรายการที่ส่งมา การเปลี่ยน Viewer เป็น Editor จะเขียนไฟล์ได้เมื่อคีย์มี `files:write` อยู่แล้ว
+- หากเปลี่ยนเฉพาะชื่อ ให้ละ `departmentGrants` ส่ง `name` เป็น `null` เพื่อล้างชื่อ หรือส่งชื่อที่ยาว 1–100 ตัวอักษรหลังตัดช่องว่างหัวท้าย ใช้ชื่อระบบที่เชื่อมต่อและไม่ใส่ข้อมูลรับรองในชื่อ คีย์เดิมเริ่มด้วย `name: null` และ `revision: 0`
+- คำตอบ `200` มีชื่อ รุ่นข้อมูล และสิทธิ์รายหน่วยงานปัจจุบัน เมื่อข้อมูลเปลี่ยนจริง ระบบเพิ่มรุ่นและบันทึก `key.update` ในประวัติการใช้งาน ข้อมูลสิทธิ์ในบันทึกจัดกลุ่ม ID หน่วยงานตามบทบาทและตัดขีดใน UUID ให้พอดีกับเพดานขนาด หากข้อมูลเท่าเดิม ระบบจะคืนรุ่นปัจจุบัน ตรวจบทบาทที่แก้แล้วโดยใช้คีย์ไฟล์เรียก `GET /api/v1/me`
+- เมื่อได้ `409 key_revision_conflict` ให้โหลดรายการใหม่และทบทวนการแก้ไขก่อนส่ง PATCH อีกครั้ง เมื่อได้ `409 key_rotation_overlap` ให้รอจนทุกคีย์ก่อนหน้าที่ใช้งานอยู่หมดอายุหรือถูกเพิกถอน แล้วจึงเปลี่ยนบทบาทบนคีย์ทดแทนล่าสุด `409 key_not_editable` ใช้กับคีย์ที่หมดอายุ ถูกเพิกถอน หรือเป็นคีย์จัดการภายในขอบเขตผู้เรียก เป้าหมายนอกขอบเขตจะได้ `404` และหน่วยงานที่ขอเพิ่มนอกสิทธิ์ผู้เรียกจะได้ `403`
+- ถ้ายังไม่ได้รัน [สคริปต์ปรับฐานข้อมูลสำหรับหมุนคีย์](db/migrations/20261110093652_application_key_rotation.sql) ให้รันก่อน จากนั้นรัน [สคริปต์เพิ่มข้อมูลกำกับและบทบาทคีย์](db/migrations/20261116051020_application_key_metadata_and_roles.sql) บนฐานข้อมูลทดสอบก่อนติดตั้งเว็บ ขั้นตอนตรวจสอบก่อนติดตั้งตรวจทั้งสองสคริปต์และสิทธิ์ของ API ให้ทำซ้ำบนฐานข้อมูลจริงเมื่อปล่อยรุ่น หากต้องย้อนรุ่นแอป คงคอลัมน์ที่เพิ่มและข้อมูลที่บันทึกไว้ได้
 
-### Rotate a file API key
+### หมุน API key สำหรับไฟล์
 
-1. In Postman, set `rotationKeyId` to the existing file key's ID and use the Management key as the bearer credential. Send **Rotate API key** with an empty body or `{ "expiresInDays": 90 }`. The accepted lifetime is 1–365 days (default 90). Rotation accepts active file keys with department grants and only `files:read` and/or `files:write`.
-2. Save `data.apiKey` from the `201` response in the application's secret store. The response returns the new key metadata and `data.oldKey.expiresAt`, the earlier of the old expiry and 24 hours after rotation. The old and new keys work during that overlap unless one is revoked earlier.
-3. Update every application instance. Confirm `GET /api/v1/me` and a representative application operation with the new key. Check outstanding uploads and malware scans started by the old key before revoking it using `DELETE /api/v1/keys/{keyId}`. If you suspect the old key leaked, revoke it immediately.
-4. If the response was lost, find the replacement via `rotatedFromKeyId` in **List API keys** or `error.details.replacementId` in the duplicate `409 key_already_rotated` response. If you did not save the secret, rotate the replacement and revoke the key with the unknown secret. This does not extend the original key's deadline.
+1. ใน Postman ตั้ง `rotationKeyId` เป็น ID ของคีย์ไฟล์เดิม แล้วใช้คีย์จัดการเป็น Bearer token ส่ง **Rotate API key** โดยเว้นเนื้อหาคำขอว่างหรือใช้ `{ "expiresInDays": 90 }` กำหนดอายุได้ 1–365 วัน ค่าเริ่มต้น 90 วัน รับคีย์ไฟล์ที่ยังใช้งานได้ มีสิทธิ์รายหน่วยงาน และมีเฉพาะ `files:read` หรือ `files:write` หรือทั้งสองอย่าง
+2. บันทึก `data.apiKey` จากคำตอบ `201` ในที่เก็บค่าลับของแอป คำตอบมีข้อมูลคีย์ใหม่และ `data.oldKey.expiresAt` ซึ่งเป็นเวลาที่ถึงก่อนระหว่างวันหมดอายุเดิมกับ 24 ชั่วโมงหลังหมุนคีย์ ทั้งสองคีย์ใช้ได้ในช่วงที่ซ้อนกันจนหมดอายุหรือถูกเพิกถอน
+3. อัปเดตคีย์ทุกอินสแตนซ์ของแอป แล้วใช้คีย์ใหม่เรียก `GET /api/v1/me` และทดสอบงานที่แอปใช้งานจริง ตรวจงานอัปโหลดและงานสแกนมัลแวร์ที่เริ่มด้วยคีย์เดิมก่อนเพิกถอนผ่าน `DELETE /api/v1/keys/{keyId}` หากสงสัยว่าคีย์เดิมรั่ว ให้เพิกถอนทันที
+4. หากไม่ได้รับคำตอบ ให้หาคีย์ทดแทนจาก `rotatedFromKeyId` ใน **List API keys** หรือ `error.details.replacementId` ในคำตอบ `409 key_already_rotated` จากการส่งซ้ำ หากยังไม่ได้เก็บค่าลับ ให้หมุนคีย์ทดแทนอีกครั้งแล้วเพิกถอนคีย์ที่ไม่ทราบค่าลับ วันหมดอายุของคีย์ต้นทางยังเป็นเวลาเดิม
 
-The rotation audit records the acting Management key, both file key IDs and expiry timestamps. Apply the key rotation migration from `db/migrations/` to the target database before deploying the new web build. The Railway web pre-deploy check verifies the schema and grants. If rolling back the web release, keep the additive migration in place. Keys already created and shortened expiry dates remain effective.
+ประวัติการหมุนคีย์บันทึกคีย์จัดการที่ทำรายการ ID ของคีย์ไฟล์ทั้งสอง และเวลาหมดอายุ รันสคริปต์ปรับฐานข้อมูลสำหรับหมุนคีย์จาก `db/migrations/` บนฐานข้อมูลเป้าหมายก่อนติดตั้งเว็บรุ่นใหม่ ขั้นตอนตรวจสอบก่อนติดตั้งเว็บบน Railway ตรวจโครงสร้างและสิทธิ์ หากย้อนรุ่นเว็บ ให้คงโครงสร้างที่เพิ่มไว้ คีย์ที่สร้างไปแล้วและวันหมดอายุที่ปรับให้เร็วขึ้นยังมีผล
 
-## Application key authentication
+## การยืนยันตัวตนด้วย API key ของแอปพลิเคชัน
 
-- `GET /api/v1/me` validates `Authorization: Bearer <API_KEY>` and returns the authenticated tenant, application, and granted scopes.
-- Browser requests use a Supabase Auth access token instead. The API verifies it and loads active tenant membership and department roles; uploads derive `owner_subject` from the verified user ID. See [Auth setup](docs/SUPABASE_AUTH_SETUP.md).
-- Invalid, expired, revoked, or inactive keys receive the same `401` response. Database failures return `503` without exposing connection details.
-- The authentication query derives tenant and application identity from the key row; it never trusts tenant or application IDs from caller-supplied headers or request bodies.
-- API keys are server-to-server credentials. Do not place them in browser code or `NEXT_PUBLIC_` variables. A browser app should call its own backend, which then calls this service.
-- `POST /api/v1/files/upload-intents` requires `files:write`; it records a `pending_upload` file and upload intent, then returns a short-lived Storage upload grant. The caller supplies `ownerSubject` from its own authenticated-user context; tenant and application IDs always come from the API key.
-- `POST /api/v1/files/{fileId}/complete` verifies that the object exists, checks actual size and signature, and queues malware scanning with `202 pending_scan`. Oversized uploads are quarantined and cleaned up after the upload grant expires and its grace period ends.
-- `POST /api/v1/files/{fileId}/download-url` requires `files:read` and an `ownerSubject`; it returns a five-minute signed URL only when the file belongs to the key's tenant/application and that owner.
-- `POST /api/v1/files/search` requires `files:read` and an `ownerSubject`; it returns available file metadata with cursor pagination, without exposing Storage object paths.
-- `POST /api/v1/files/{fileId}/delete` requires `files:write` and Editor/Admin role; it moves an available file to trash while retaining the Storage object. It returns `200` with `trashed: true`.
-- `GET /api/v1/files/trash` lists trashed files with cursor pagination. `POST /api/v1/files/{fileId}/restore` queues an Editor/Admin-accessible file for a scan. It stays in trash until the scan passes.
-- `POST /api/v1/files/{fileId}/purge` requires Admin role; it atomically queues permanent deletion in `filesvc.outbox` and returns `202`.
-- The outbox worker reads `file.object_delete_requested`, removes the Storage object idempotently, marks the file `deleted`, and marks the event processed. Failed events are retried with capped exponential backoff.
+- `GET /api/v1/me` ตรวจ `Authorization: Bearer <API_KEY>` แล้วคืนองค์กร แอปพลิเคชัน และขอบเขตสิทธิ์ของคีย์ที่ยืนยันแล้ว
+- คำขอจากเบราว์เซอร์ใช้ access token ของ Supabase Auth โดย API ตรวจโทเคนแล้วโหลดสมาชิกองค์กรที่ยังใช้งานและบทบาทรายหน่วยงาน เมื่ออัปโหลด ระบบตั้ง `owner_subject` จาก ID ผู้ใช้ที่ตรวจแล้ว ดู [วิธีตั้งค่า Auth](docs/SUPABASE_AUTH_SETUP.md)
+- คีย์ที่ไม่ถูกต้อง หมดอายุ ถูกเพิกถอน หรือปิดใช้งานจะได้ `401` เหมือนกัน หากฐานข้อมูลขัดข้อง ระบบตอบ `503` โดยไม่เปิดเผยรายละเอียดการเชื่อมต่อ
+- ระบบอ่านองค์กรและแอปพลิเคชันจากแถว API key ที่ยืนยันแล้ว ข้อมูลในส่วนหัวหรือเนื้อหาคำขอไม่สามารถเปลี่ยนขอบเขตนี้ได้
+- API key เป็นข้อมูลรับรองสำหรับการเรียกระหว่างเซิร์ฟเวอร์ ห้ามใส่ในโค้ดเบราว์เซอร์หรือตัวแปร `NEXT_PUBLIC_` ให้แอปในเบราว์เซอร์เรียกเซิร์ฟเวอร์ของตัวเอง แล้วให้เซิร์ฟเวอร์เรียกบริการนี้ต่อ
+- `POST /api/v1/files/upload-intents` ต้องมี `files:write` ระบบบันทึกไฟล์สถานะ `pending_upload` และคำขอเริ่มอัปโหลด แล้วคืนสิทธิ์อัปโหลดเข้า Storage ที่มีอายุสั้น ผู้เรียกระบุ `ownerSubject` จากผู้ใช้ที่ผ่านการยืนยันในระบบของตน ส่วนองค์กรและแอปพลิเคชันมาจาก API key
+- `POST /api/v1/files/{fileId}/complete` ตรวจว่าไฟล์มีอยู่จริงและตรวจขนาดกับลายเซ็นของไฟล์ จากนั้นเข้าคิวสแกนมัลแวร์ด้วย `202 pending_scan` ไฟล์ที่เกินขนาดจะถูกกักไว้และเก็บกวาดหลังสิทธิ์อัปโหลดหมดอายุและพ้นช่วงผ่อนผัน
+- `POST /api/v1/files/{fileId}/download-url` ต้องมี `files:read` และ `ownerSubject` ระบบคืนลิงก์ที่ลงลายเซ็นอายุ 5 นาทีเมื่อไฟล์ตรงกับองค์กร แอปพลิเคชัน และเจ้าของที่ระบุ
+- `POST /api/v1/files/search` ต้องมี `files:read` และ `ownerSubject` ระบบแสดงข้อมูลกำกับไฟล์ที่พร้อมใช้ แบ่งหน้าด้วยเคอร์เซอร์ และไม่เปิดเผยพาธวัตถุใน Storage
+- `POST /api/v1/files/{fileId}/delete` ต้องมี `files:write` และบทบาท Editor หรือ Admin ระบบย้ายไฟล์ที่พร้อมใช้ลงถังขยะและคงวัตถุใน Storage ไว้ แล้วคืน `200` พร้อม `trashed: true`
+- `GET /api/v1/files/trash` แสดงรายการไฟล์ในถังขยะโดยแบ่งหน้าด้วยเคอร์เซอร์ `POST /api/v1/files/{fileId}/restore` เข้าคิวสแกนไฟล์ที่ Editor หรือ Admin มีสิทธิ์กู้คืน ไฟล์ยังอยู่ในถังขยะจนกว่าจะสแกนผ่าน
+- `POST /api/v1/files/{fileId}/purge` ต้องมีบทบาท Admin ระบบบันทึกงานลบถาวรใน `filesvc.outbox` ภายในธุรกรรมเดียวและคืน `202`
+- outbox worker อ่าน `file.object_delete_requested` ลบวัตถุใน Storage แบบที่ทำซ้ำได้โดยไม่เกิดผลซ้ำ ตั้งไฟล์เป็น `deleted` และบันทึกว่างานประมวลผลแล้ว หากล้มเหลว ระบบจะลองใหม่โดยเพิ่มเวลารอแบบทวีคูณจนถึงเพดานที่กำหนด
 
-## Run the outbox worker locally
+## รัน outbox worker ในเครื่อง
 
-Create a dedicated login role as a database administrator. The existing `filesvc_worker` group role already has the required read/update grants and RLS policies; do not run the worker with the API login or `postgres`:
+ใช้บัญชีผู้ดูแลฐานข้อมูลสร้างบัญชีสำหรับ worker โดยเฉพาะ บทบาทกลุ่ม `filesvc_worker` มีสิทธิ์อ่านและแก้ไขรวมถึงนโยบาย RLS ที่ต้องใช้แล้ว ให้รัน worker ด้วยบัญชีนี้แทนบัญชี API หรือ `postgres`
 
 ```sql
 create role filesvc_worker_runtime login in role filesvc_worker;
 ```
 
-Set its password securely in `psql` with `\password filesvc_worker_runtime`, then add a `WORKER_DATABASE_URL` for that login to `.env.local`. For Supabase Session Pooler, use the pooler host/port and the username format shown by the Dashboard, typically `filesvc_worker_runtime.<project-ref>`. Keep `SUPABASE_SECRET_KEY` server-side; the worker needs it to remove objects.
+ตั้งรหัสผ่านผ่าน `psql` ด้วย `\password filesvc_worker_runtime` แล้วเพิ่ม `WORKER_DATABASE_URL` ของบัญชีนี้ลงใน `.env.local` สำหรับ Supabase Session Pooler ให้ใช้โฮสต์ พอร์ต และรูปชื่อผู้ใช้ที่ระบุใน Dashboard ซึ่งมักเป็น `filesvc_worker_runtime.<project-ref>` เก็บ `SUPABASE_SECRET_KEY` ไว้ฝั่งเซิร์ฟเวอร์ เพราะ worker ใช้ลบวัตถุ
 
-Run the worker in a second terminal:
+เปิดอีกเทอร์มินัลแล้วสั่งรัน worker
 
 ```powershell
 npm.cmd run worker:outbox
 ```
 
-It polls the outbox until stopped with `Ctrl+C`. After the worker is running, a `202` from the purge endpoint means the event is queued; the worker then removes the object and changes the file status to `deleted`.
-- Upload tokens and signed URLs are bearer capabilities. Treat the response as a secret and do not log it. The current private bucket has no per-bucket size limit configured; set one in the Supabase Dashboard to match `MAX_UPLOAD_SIZE_BYTES` before relying on the API size check in production.
+worker จะตรวจคิวเป็นระยะจนกด `Ctrl+C` เมื่อ worker ทำงานแล้ว คำตอบ `202` จากคำขอลบถาวรหมายถึงส่งงานเข้าคิวสำเร็จ จากนั้น worker จะลบวัตถุและเปลี่ยนสถานะไฟล์เป็น `deleted`
+- ผู้ที่มีโทเคนอัปโหลดหรือลิงก์ที่ลงลายเซ็นสามารถใช้สิทธิ์ตามที่ลิงก์ให้ไว้ จึงควรเก็บคำตอบเป็นความลับและไม่บันทึกลงระบบ ปัจจุบัน bucket ส่วนตัวยังไม่มีเพดานขนาดไฟล์ ให้ตั้งใน Supabase Dashboard ให้ตรงกับ `MAX_UPLOAD_SIZE_BYTES` ก่อนเปิดใช้การตรวจขนาดของ API บนระบบจริง
 
-### Security rollout preparation — 4 พฤศจิกายน 2569
+### เตรียมเปิดใช้ระบบความปลอดภัยบน Railway วันที่ 4 พฤศจิกายน 2569
 
-สร้าง Railway service `efin-dms-redis` (ID `dacabc32-d867-4347-97d9-af1d1eb97395`) ใน project EFIN DMS, Singapore 1 replica, sleep ปิด ตรวจไม่มี public domain และไม่มี TCP proxy แล้ว ตั้ง Redis reference, HMAC secret และ report mode เป็น staged web variables ด้วย skip-deploys ไม่แสดงค่าลับ ไม่ deploy เว็บ/worker รุ่นใหม่นี้ และยังไม่เปิด enforce ผลทดสอบบน Railway ให้ทีมตรวจหลัง deploy release นี้
+สร้างบริการ `efin-dms-redis` (ID `dacabc32-d867-4347-97d9-af1d1eb97395`) ในโปรเจกต์ EFIN DMS เขตสิงคโปร์ จำนวน 1 อินสแตนซ์ ปิดโหมดพักและตรวจว่าไม่มีโดเมนสาธารณะหรือ TCP proxy เตรียมค่าตัวแปรเว็บสำหรับอ้างถึง Redis, ค่าลับ HMAC และโหมดรายงานไว้ด้วยตัวเลือก skip-deploys โดยไม่แสดงค่าลับ เว็บและ worker รุ่นนี้ยังไม่ถูกติดตั้งและยังไม่เปิดโหมดบังคับใช้ ให้ทีมตรวจบน Railway หลังติดตั้งรุ่นนี้
 
-ผลตรวจ local ของ security release (4 พฤศจิกายน 2569): backend/security tests 17 กรณีผ่าน พร้อม Search/Version/Quota regression; CURRENT UI 13 กลุ่มและ responsive 375/390/768/1024/1280/1440 ผ่าน; browser security tests 3 กรณีผ่าน รวม login/invitation error, response headers และ text/image/PDF preview/download ด้วย mocks Gitleaks ตรวจ history 22 commits และ source working tree ไม่พบ leaks ตามกฎที่ใช้ npm audit ไม่มี High/Critical (ยังมี Low/Moderate ใน dev dependencies) Runtime เปลี่ยนเป็น Node24 Alpine หลัง Debian มี unpatched OS findings; Alpine scan ไม่พบ High/Critical โดยไม่เพิ่ม ignore ไม่มีการยืนยันผล CI บน GitHub หรือ flow จริงบน Railway ในรอบนี้
+ผลตรวจในเครื่องวันที่ 4 พฤศจิกายน 2569 ผ่านชุดทดสอบฝั่งเซิร์ฟเวอร์และความปลอดภัย 17 กรณี รวมการค้นหา เวอร์ชัน และโควตา หน้าจอ CURRENT ผ่าน 13 กลุ่มและที่ความกว้าง 375/390/768/1024/1280/1440 พิกเซล ชุดทดสอบความปลอดภัยในเบราว์เซอร์ผ่าน 3 กรณี ครอบคลุมข้อผิดพลาดจากการเข้าสู่ระบบหรือคำเชิญ ส่วนหัวของคำตอบ และการดูตัวอย่างหรือดาวน์โหลดข้อความ รูป และ PDF ด้วยบริการจำลอง Gitleaks ตรวจประวัติ 22 คอมมิตและไฟล์ที่ใช้งานอยู่แล้วไม่พบข้อมูลลับตามกฎที่ใช้ `npm audit` ไม่พบระดับ High หรือ Critical แต่ยังพบ Low และ Moderate ในแพ็กเกจสำหรับพัฒนา อิมเมจขณะรันเปลี่ยนเป็น Node 24 Alpine เพราะ Debian มีรายการช่องโหว่ระบบปฏิบัติการที่ยังไม่มีแพตช์ ผลสแกน Alpine ไม่พบ High หรือ Critical โดยไม่ต้องเพิ่มข้อยกเว้น รอบนี้ยังไม่ได้ยืนยันผล CI บน GitHub หรือการใช้งานจริงบน Railway
 
-### Test-script removal
+### การนำชุดทดสอบเดิมออก
 
-The legacy regression scripts under `scripts/` and the later security, file-validation, scanner and browser test suites under `tests/` were removed with their npm and CI commands. Use the manual acceptance steps above for those flows.
+นำสคริปต์ทดสอบการถดถอยเดิมใน `scripts/` และชุดตรวจความปลอดภัย ชนิดไฟล์ เครื่องสแกน และเบราว์เซอร์ใน `tests/` ออกพร้อมคำสั่ง npm และ CI ที่เกี่ยวข้อง ให้ใช้ขั้นตอนตรวจด้วยตนเองข้างต้นสำหรับส่วนเหล่านั้น
+
+### การยืนยันตัวตนหลายปัจจัย (MFA) ของ Tenant Admin ด้วย TOTP
+
+Tenant Admin ต้องยืนยัน MFA ก่อนเข้าถึง DMS รวมถึงการเรียก `/api/v1/me` และการขอลิงก์ที่ลงลายเซ็น
+ผู้ใช้ทั่วไปและ API key `fsvc_` ใช้สิทธิ์เดิม บัญชีผู้ดูแลยังไม่มี `keys:manage`
+หลังกรอกรหัสผ่าน ผู้ดูแลที่ยังไม่มีอุปกรณ์ยืนยันตัวตนให้กด **เริ่มตั้งค่า MFA** แล้วสแกน QR ด้วยแอป Authenticator
+จากนั้นกรอกรหัส 6 หลัก ครั้งถัดไปให้ใช้รหัสจากอุปกรณ์ที่ยืนยันแล้ว
+การลงทะเบียนอาจทำให้ Supabase ยกเลิกเซสชันอื่น ส่วนปุ่มออกจากระบบปกติยังใช้ `scope: local`
+
+ฝั่งเซิร์ฟเวอร์ตรวจลายเซ็น JWT และค่า `aal2` พร้อมตรวจเซสชันและอุปกรณ์ล่าสุดในฐานข้อมูล
+ผ่าน `filesvc.check_dms_mfa_session(uuid,uuid,uuid)` เมื่อลบอุปกรณ์แล้ว ระบบจะปฏิเสธ JWT เดิม
+เซสชัน DMS มีอายุ 8 ชั่วโมงจากการเข้าสู่ระบบ และหมดอายุเมื่อไม่มีการใช้งาน 30 นาที
+การยืนยัน MFA หรือต่ออายุโทเคนไม่เริ่มนับ 8 ชั่วโมงใหม่ และคำขอที่ถูกปฏิเสธเพราะ MFA ไม่นับเป็นกิจกรรม
+
+| คำตอบจาก API | ความหมายและวิธีดำเนินการ |
+| --- | --- |
+| `403 mfa_required` | ยืนยันหรือลงทะเบียน TOTP ใน Supabase แล้วใช้ access token ใหม่เรียก API |
+| `503 mfa_verification_unavailable` | ตรวจฟังก์ชัน สิทธิ์เรียก และการเชื่อมต่อฐานข้อมูล โดยคงการบังคับใช้ MFA ไว้ |
+| `401 session_expired` | เข้าสู่ระบบใหม่แล้วทำ MFA การต่ออายุโทเคนไม่ได้ต่ออายุเซสชัน DMS |
+| `401 account_suspended` / `membership_denied` | ติดต่อผู้ดูแลตามขั้นตอนเดิม |
+
+ข้อผิดพลาดข้างต้นใช้ `no-store` พร้อม ID คำขอ และไม่มีข้อมูลหน่วยงานหรือเอกสาร
+การลงทะเบียน สร้างคำขอยืนยัน และตรวจรหัสเรียก Supabase Auth โดยตรง จึงอยู่ภายใต้เพดานคำขอของ Supabase Auth
+ตัวจำกัดคำขอ Redis ของ DMS ไม่ครอบคลุมคำขอเหล่านี้ ระบบไม่ส่งรหัส OTP หรือคำขอแก้ข้อมูลซ้ำโดยอัตโนมัติ
+ส่วนกู้คืนรหัสผ่านแยกเซสชันไว้ในหน่วยความจำ หากมีอุปกรณ์ยืนยันตัวตนแล้ว ผู้ใช้ต้องผ่าน MFA ก่อนเปลี่ยนรหัสผ่าน
+การรีเซ็ตรหัสผ่านจะคงอุปกรณ์ MFA ไว้ หากมือถือหายให้ใช้ขั้นตอนกู้คืนผ่านฝ่ายไอทีด้านล่าง
+
+#### ปรับฐานข้อมูลและเปิดใช้งาน
+
+1. ตรวจว่าได้รัน `db/migrations/20261109073836_dms_user_sessions.sql` แล้ว จากนั้นให้ผู้ดูแลฐานข้อมูลรัน
+   `db/migrations/20261116093019_tenant_admin_mfa.sql` ในสภาพแวดล้อมทดสอบก่อน
+   สคริปต์นี้เพิ่มฟังก์ชันอ่านสถานะ โดยคงข้อมูล `auth.*` เดิมและไม่เก็บ OTP หรือค่าลับใน `filesvc`
+2. ตรวจว่า Supabase Auth เปิดให้ลงทะเบียนและยืนยัน TOTP ตรวจเพดานคำขอ Auth
+   และระบุผู้รับผิดชอบกู้คืน MFA ฝั่งไอที TOTP ใช้งานได้โดยไม่ต้องตั้ง Mailjet หรือ SMTP เพิ่ม
+3. การตรวจเว็บก่อนติดตั้งจะตรวจฟังก์ชัน สิทธิ์ `EXECUTE` และทดลองเรียกฟังก์ชันจริง
+   `filesvc_api` ต้องเรียกได้ ส่วน `anon` และ `authenticated` ต้องเรียกไม่ได้
+   บัญชีที่ใช้รันระบบต้องไม่มีสิทธิ์ `SELECT` โดยตรงบน `auth.sessions` หรือ `auth.mfa_factors`
+4. หลังทีมตรวจรับแล้ว ให้รันสคริปต์ปรับฐานข้อมูลและติดตั้งเว็บ ส่วน worker ใช้รุ่นเดิม
+   ผู้ดูแลที่เข้าสู่ระบบค้างไว้จะถูกขอให้ทำ MFA เมื่อเรียก API ครั้งต่อไป
+   ระบบเปิดบังคับ MFA โดยไม่มีโหมด `report` หรือ `off` และไม่ต้องตั้งตัวแปรลับเพิ่ม
+5. หากมีปัญหา ให้พักการเข้าถึงและแก้ไข หรือใช้รุ่นที่ยังบังคับ MFA
+   การกลับไปรุ่นก่อน MFA จะยกเลิกการป้องกัน ให้คงอุปกรณ์และโครงสร้างที่เพิ่มไว้ระหว่างย้อนรุ่น
+   ลิงก์ที่ลงลายเซ็นและออกไปแล้วจะใช้ได้ตามอายุเดิม
+
+#### คู่มือฝ่ายไอทีเมื่ออุปกรณ์หายหรือต้องเปลี่ยนอุปกรณ์
+
+- ตรวจตัวตนผ่านช่องทางองค์กรที่เชื่อถือได้ แล้วบันทึกผู้ดำเนินการ เหตุผล เลขอ้างอิงงาน และ ID ผู้ใช้
+  ยืนยันโปรเจกต์ Supabase และองค์กรที่เกี่ยวข้อง และตรวจแอปอื่นที่ใช้บัญชีเดียวกัน เพราะ MFA ผูกกับบัญชี
+- พักการเข้าถึง DMS โดยเปลี่ยน `filesvc.tenant_users.status` เป็น `suspended` ผ่านช่องทางผู้ดูแลเดิม
+  บันทึกสถานะเดิมไว้ ทริกเกอร์จะตั้ง `session_not_before` เพื่อไม่ให้เซสชันเดิมกลับมาใช้ได้เมื่อเปิดบัญชีอีกครั้ง
+  หากเป็นผู้ดูแลคนสุดท้าย ให้เจ้าหน้าที่ที่มีสิทธิ์ฐานข้อมูลดำเนินการตามเลขอ้างอิงงาน โดยระบุองค์กรและ ID ผู้ใช้อย่างเจาะจง
+- ใช้หน้า **Authentication → Users** ใน Supabase หรือเครื่องมือ Admin API ของฝ่ายไอที
+  เรียก `auth.admin.mfa.listFactors({ userId })` เพื่อตรวจ ID แล้วเรียก
+  `auth.admin.mfa.deleteFactor({ userId, id: factorId })` เฉพาะอุปกรณ์ที่ต้องรีเซ็ต
+  การลบอุปกรณ์ที่ยืนยันแล้วจะยกเลิกเซสชันของบัญชีด้วย ตรวจผลและประวัติของ Supabase Auth ก่อนคืนสิทธิ์
+- หากขั้นตอนใดล้มเหลว ให้คง `suspended` ไว้และตรวจสถานะอีกครั้ง โดยคงการบังคับใช้ MFA
+  เมื่อสำเร็จ ให้คืน `status` เดิมและคง `is_admin` กับบทบาทเดิมไว้
+  ผู้ใช้ต้องเข้าสู่ระบบใหม่และลงทะเบียน MFA ก่อนใช้งาน
+- การรีเซ็ต ปิด หรือเปลี่ยนอุปกรณ์ MFA ใช้ช่องทางฝ่ายไอทีในรุ่นนี้
+  เก็บข้อมูลรับรองของ Admin API ในที่เก็บค่าลับของฝ่ายไอที แยกจากโค้ดฝั่งหน้าเว็บ ไฟล์ส่งออก Postman และรายการแจ้งงาน
+  ให้จัดการอุปกรณ์ผ่านช่องทางข้างต้นโดยไม่แก้หรือลบแถวใน `auth.*` โดยตรง
+
+เก็บ QR, ค่าลับ TOTP, OTP และโทเคนกู้คืนไว้นอก URL บันทึกระบบ ประวัติการใช้งาน ภาพหน้าจอ และไฟล์ผลทดสอบ
+ใช้ประวัติ Supabase Auth เป็นหลักฐานการลงทะเบียน ยืนยัน และรีเซ็ต ส่วน DMS บันทึกเฉพาะรหัสข้อผิดพลาด
+ID คำขอ และเส้นทางแบบจำกัดความถี่ โดยไม่เขียนประวัติทุกครั้งที่ตัวตรวจ MFA ปฏิเสธคำขอ
+
+#### ทดสอบ MFA ในสภาพแวดล้อมแยก
+
+ใช้ Node 24, Docker และ Supabase CLI 3.1.0 ชุดทดสอบนี้ไม่อ่าน `.env.local`
+ระบบทดสอบใช้ชื่อ `efin-dms-mfa-tests` พอร์ต 55321/55322/55324 และโฟลเดอร์ชั่วคราว `.mfa-local/`
+โครงสร้างฐานข้อมูลจำลองมีเฉพาะตารางที่จำเป็นสำหรับการทดสอบ
+
+```powershell
+npm.cmd run test:mfa
+node tests/mfa/local-stack.mjs start
+npm.cmd run test:mfa:local
+node tests/mfa/local-stack.mjs stop
+```
+
+`test:mfa` เรียกตัวจัดการคำขอทุกเส้นทางใน v1 ด้วยผู้ดูแลระดับ AAL1 ตรวจการปฏิเสธคำขอ ความขัดข้องของการตรวจ สิทธิ์เดิม และการปิดบังข้อมูลลับ
+`test:mfa:local` ใช้ TOTP จริงกับ Supabase ในเครื่อง ตรวจอุปกรณ์และเซสชันที่ใช้งานอยู่ การแยกองค์กร
+สิทธิ์ การกู้คืน อายุเซสชันทั้งจากการไม่ใช้งานและจากเวลาเข้าสู่ระบบ การระงับบัญชี การเลื่อนเป็นผู้ดูแล และการออกจากระบบเฉพาะเบราว์เซอร์
+ระบบสร้างบัญชีจำลองและลบเมื่อทดสอบจบ การทดสอบใช้เฉพาะข้อมูลจำลอง
+หากมี CLI อยู่แล้ว ให้ตั้ง `SUPABASE_CLI_PATH` เป็นพาธของไฟล์ JavaScript ที่ใช้เริ่ม CLI
+
+ชุดทดสอบเบราว์เซอร์ใช้รุ่นที่สร้างสำหรับใช้งานจริงร่วมกับค่าสาธารณะจำลอง
+ตัวอย่าง PowerShell ตั้งค่าเฉพาะในโปรเซสปัจจุบัน โดยไม่แก้ไฟล์ตัวแปรสภาพแวดล้อม
+
+```powershell
+$env:NEXT_PUBLIC_SUPABASE_URL='https://mfa-fixture.invalid'
+$env:NEXT_PUBLIC_SUPABASE_PUBLISHABLE_KEY='fixture-public-configuration'
+npm.cmd run build -- --webpack
+npm.cmd run test:mfa:browser
+```
+
+ทดสอบหน้าจอเดสก์ท็อป 1440×900 และมือถือ 390×844 ด้วย API จำลอง โดยปิดการบันทึก trace วิดีโอ และภาพอัตโนมัติที่อาจเก็บค่าลับ
+ชุดทดสอบ MFA อยู่ใน `tests/mfa/` แยกจากอิมเมจสำหรับรัน Docker และเป็นชุดใหม่เฉพาะ MFA
+CI เพิ่ม `MFA local integration` และเพิ่มการทดสอบเบราว์เซอร์ใน `Security and regression`
+ให้ตั้งทั้งสองรายการร่วมกับ `Dependency scan`, `Secret scan` และ `Runtime image scan` เป็นรายการตรวจที่ต้องผ่านก่อน merge
+
+#### ทดสอบด้วย Postman จากการเข้าสู่ระบบถึงการยืนยัน MFA
+
+นำเข้า `postman/EFIN-DMS-MFA.postman_collection.json` ซึ่งมีค่าตั้งต้นของตัวแปรลับเป็นค่าว่างสำหรับนำขึ้น Git
+ชุดคำขอหลักใน `postman/File-Storage-Service.postman_collection.json` มีขั้นตอนเดียวกันสำหรับใช้งานในเครื่อง
+ส่งทีละคำขอเพื่อเก็บค่าจากแต่ละคำตอบก่อนส่งข้อถัดไป
+
+1. ส่ง **Login with email and password** ด้วยบัญชีทดสอบ เก็บโทเคนเฉพาะในเครื่องหรือ Vault ของ Postman แล้วเรียก `/api/v1/me` ซึ่งควรคืน `403 mfa_required`
+2. ดู `factors` จากข้อมูลผู้ใช้ Auth หากยังไม่มีอุปกรณ์ TOTP ที่ยืนยันแล้ว ให้ส่ง **MFA - Enroll TOTP** แล้วใช้ QR หรือค่าลับตั้งแอป
+   เก็บคำตอบที่มีค่าลับไว้เฉพาะตอนตั้งค่า โดยไม่บันทึกลงตัวอย่างหรือส่งออก
+3. ตั้ง `mfaFactorId` เป็น ID อุปกรณ์ของบัญชีนี้ ส่ง **MFA - Challenge** แล้วใช้ `mfaChallengeId` ที่ได้
+4. กรอกรหัสล่าสุดใน `mfaCode` และส่ง **MFA - Verify TOTP** เก็บ access token และ refresh token ใหม่แทนชุดเดิม
+5. ส่ง **MFA - Who am I after verification** ต้องได้ `200` และสิทธิ์เดิม ล้าง OTP โทเคน และค่าลับหลังทดสอบ
+
+บันทึกผลทดสอบในเครื่องและ CI แยกจากผลบน Railway ชุดทดสอบนี้ตรวจในสภาพแวดล้อมแยก ส่วนการติดตั้งและตรวจระบบจริงมีขั้นตอนของตัวเอง
