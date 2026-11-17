@@ -8,6 +8,9 @@ import { FolderAccess } from "./folder-access";
 import { StorageQuotas } from "./storage-quotas";
 import { ApiKeys } from "@/components/dms/api-keys";
 import { AuthScreen } from "@/components/dms/auth-screen";
+import { AuthFrame } from "@/components/dms/auth-frame";
+import { MfaChallenge } from "@/components/dms/mfa-challenge";
+import { getBrowserAuth } from "@/lib/browser-auth";
 import { AppShell, managementTabs } from "@/components/dms/shell";
 import { FilesWorkspace } from "@/components/dms/workspace";
 import { FileDetails } from "@/components/dms/details";
@@ -56,7 +59,7 @@ function DmsApplication() {
         setTab("files");
         resetNavigation();
     }, [resetNavigation]);
-    const { api, phase, identity, setIdentity, authError, login, logout } = useDmsSession(resetWorkspace);
+    const { api, phase, identity, setIdentity, authError, login, logout, resume } = useDmsSession(resetWorkspace);
 
     async function submitLogout() {
         if (logoutLock.current) return;
@@ -133,6 +136,11 @@ function DmsApplication() {
             }
         }
     }
+    if (phase === "mfa") return (
+        <AuthFrame title="ยืนยันตัวตนสองขั้นตอน">
+            <MfaChallenge auth={getBrowserAuth().auth} onVerified={resume} onCancel={logout} />
+        </AuthFrame>
+    );
     if (phase !== "ready" || !identity)
         return (
             <AuthScreen

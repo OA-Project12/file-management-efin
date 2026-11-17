@@ -34,17 +34,24 @@ async function request<T>(path: string, token: string, init: RequestInit = {}): 
 
 export function useDmsSession(resetWorkspace: () => void) {
     const router = useRouter();
-    const [phase, setPhase] = useState<"checking" | "login" | "ready">("checking");
+    const [phase, setPhase] = useState<"checking" | "login" | "mfa" | "ready">("checking");
     const [identity, setIdentity] = useState<Identity | null>(null);
     const [authError, setAuthError] = useState("");
     const generation = useRef(0);
     const currentUser = useRef<string | null>(null);
-    const invalidate = useCallback(() => ++generation.current, []);
+    const workspaceReady = useRef(false);
+    const pendingRequests = useRef(new Set<AbortController>());
+    const invalidate = useCallback(() => {
+        for (const controller of pendingRequests.current) controller.abort();
+        pendingRequests.current.clear();
+        return ++generation.current;
+    }, []);
 
     const endSession = useCallback(
         (message = "") => {
             invalidate();
             currentUser.current = null;
+            workspaceReady.current = false;
             setIdentity(null);
             setAuthError(message);
             setPhase("login");
@@ -52,6 +59,16 @@ export function useDmsSession(resetWorkspace: () => void) {
         },
         [invalidate, resetWorkspace],
     );
+
+    const requireMfa = useCallback((userId: string) => {
+        invalidate();
+        currentUser.current = userId;
+        workspaceReady.current = false;
+        setIdentity(null);
+        setAuthError("");
+        setPhase("mfa");
+        resetWorkspace();
+    }, [invalidate, resetWorkspace]);
 
     const assertCurrent = useCallback((ticket: number) => {
         if (ticket !== generation.current) throw new DOMException("Session changed", "AbortError");
@@ -61,7 +78,7 @@ export function useDmsSession(resetWorkspace: () => void) {
         async <T>(path: string, init?: RequestInit): Promise<T> => {
             const ticket = generation.current;
             const userId = currentUser.current;
-            if (!userId) throw new DOMException("Session changed", "AbortError");
+            if (!userId || !workspaceReady.current) throw new DOMException("Session changed", "AbortError");
             const {
                 data: { session },
                 error,
@@ -72,35 +89,78 @@ export function useDmsSession(resetWorkspace: () => void) {
                 endSession(sessionExpired);
                 throw Object.assign(new Error("unauthorized"), { code: "unauthorized", status: 401 });
             }
+            const controller = new AbortController();
+            pendingRequests.current.add(controller);
             try {
-                const result = await request<T>(path, session.access_token, init);
+                const result = await request<T>(path, session.access_token, {
+                    ...init, signal: init?.signal ? AbortSignal.any([init.signal, controller.signal]) : controller.signal,
+                });
                 assertCurrent(ticket);
                 return result;
             } catch (error) {
                 assertCurrent(ticket);
                 if ((error as ApiError).status === 401) endSession(sessionMessage(error));
+                else if (["mfa_required", "mfa_verification_unavailable"].includes((error as ApiError).code ?? "")) requireMfa(userId);
                 throw error;
+            } finally {
+                pendingRequests.current.delete(controller);
             }
         },
-        [assertCurrent, endSession],
+        [assertCurrent, endSession, requireMfa],
     );
 
     const api: Api = authenticatedRequest;
     const loadIdentity = useCallback(
         async (token: string, userId: string, ticket: number) => {
-            const current = await request<Identity>("/me", token, { headers: activityHeader });
-            assertCurrent(ticket);
-            if (current.userId !== userId) throw new Error("identity_mismatch");
-            const departments = await request<{ data: { items: Department[] } }>("/departments", token);
-            assertCurrent(ticket);
-            resetWorkspace();
-            currentUser.current = userId;
-            setIdentity({ ...current, departments: departments.data.items });
-            setAuthError("");
-            setPhase("ready");
+            try {
+                const current = await request<Identity>("/me", token, { headers: activityHeader });
+                assertCurrent(ticket);
+                if (current.userId !== userId) throw new Error("identity_mismatch");
+                const departments = await request<{ data: { items: Department[] } }>("/departments", token);
+                assertCurrent(ticket);
+                resetWorkspace();
+                currentUser.current = userId;
+                workspaceReady.current = true;
+                setIdentity({ ...current, departments: departments.data.items });
+                setAuthError("");
+                setPhase("ready");
+            } catch (error) {
+                assertCurrent(ticket);
+                if (["mfa_required", "mfa_verification_unavailable"].includes((error as ApiError).code ?? "")) {
+                    requireMfa(userId);
+                    return;
+                }
+                throw error;
+            }
         },
-        [assertCurrent, resetWorkspace],
+        [assertCurrent, resetWorkspace, requireMfa],
     );
+
+    const resuming = useRef<Promise<void> | null>(null);
+    const resume = useCallback((): Promise<void> => {
+        if (resuming.current) return resuming.current;
+        const ticket = generation.current;
+        resuming.current = (async () => {
+            const { data: { session }, error } = await getBrowserAuth().auth.getSession();
+            assertCurrent(ticket);
+            if (error) throw error;
+            if (!session || (currentUser.current && currentUser.current !== session.user.id)) {
+                endSession(sessionExpired);
+                return;
+            }
+            try {
+                if (workspaceReady.current) await authenticatedRequest("/me");
+                else {
+                    await loadIdentity(session.access_token, session.user.id, ticket);
+                    if (!workspaceReady.current) throw Object.assign(new Error("mfa_required"), { code: "mfa_required", status: 403 });
+                }
+            } catch (error) {
+                if ((error as ApiError).status === 401) endSession(sessionMessage(error));
+                throw error;
+            }
+        })().finally(() => { resuming.current = null; });
+        return resuming.current;
+    }, [assertCurrent, authenticatedRequest, endSession, loadIdentity]);
 
     useEffect(() => {
         if (new URLSearchParams(window.location.hash.slice(1)).get("type") === "invite") {
@@ -108,6 +168,7 @@ export function useDmsSession(resetWorkspace: () => void) {
             return;
         }
         let unsubscribe: (() => void) | undefined;
+        const authTimers = new Set<number>();
         const timer = window.setTimeout(async () => {
             const ticket = generation.current;
             try {
@@ -117,10 +178,17 @@ export function useDmsSession(resetWorkspace: () => void) {
                 } = auth.onAuthStateChange((event, session) => {
                     // The callback stays synchronous. The SDK holds its auth lock here.
                     if (
-                        currentUser.current &&
-                        (event === "SIGNED_OUT" || (event === "SIGNED_IN" && session?.user.id !== currentUser.current))
+                        event === "SIGNED_OUT" || (currentUser.current && event === "SIGNED_IN" && session?.user.id !== currentUser.current)
                     ) {
                         endSession(sessionExpired);
+                    }
+                    if (currentUser.current && session?.user.id === currentUser.current &&
+                        (event === "MFA_CHALLENGE_VERIFIED" || event === "TOKEN_REFRESHED")) {
+                        const next = window.setTimeout(() => {
+                            authTimers.delete(next);
+                            void resume().catch(() => {});
+                        }, 0);
+                        authTimers.add(next);
                     }
                 });
                 unsubscribe = () => subscription.unsubscribe();
@@ -143,10 +211,11 @@ export function useDmsSession(resetWorkspace: () => void) {
         }, 0);
         return () => {
             window.clearTimeout(timer);
+            for (const next of authTimers) window.clearTimeout(next);
             unsubscribe?.();
             invalidate();
         };
-    }, [assertCurrent, endSession, invalidate, loadIdentity, router]);
+    }, [assertCurrent, endSession, invalidate, loadIdentity, resume, router]);
 
     useEffect(() => {
         if (phase !== "ready") return;
@@ -214,5 +283,5 @@ export function useDmsSession(resetWorkspace: () => void) {
         endSession();
     }
 
-    return { api, phase, identity, setIdentity, authError, login, logout };
+    return { api, phase, identity, setIdentity, authError, login, logout, resume };
 }

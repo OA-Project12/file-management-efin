@@ -5,6 +5,7 @@ import type { AuthenticatedApplication, DepartmentGrant } from "@/application/au
 import { getDatabasePool } from "@/infrastructure/database/pool";
 import { boundedFetch } from "@/infrastructure/security/supabase-fetch.mjs";
 import { createClient } from "@supabase/supabase-js";
+import { SecurityError } from "@/infrastructure/security/request-body.mjs";
 
 interface ApplicationKeyRow extends QueryResultRow {
     id: string;
@@ -148,10 +149,10 @@ async function authenticateUserToken(request: Request, token: string): Promise<A
         (path === "/api/v1/me" ? request.headers.get("X-DMS-Session-Activity") === "1" : !path.includes("/scan-jobs/"));
 
     const pool = getDatabasePool();
-    const membership = await pool.query<{ tenant_id: string; is_admin: boolean; status: string; session_valid: boolean | null }>(
-        `select tu.tenant_id, tu.is_admin, tu.status,
+    const membership = await pool.query<{ tenant_id: string; is_admin: boolean; status: string; session_valid: boolean | null; session_not_before: string | null }>(
+        `select tu.tenant_id, tu.is_admin, tu.status, tu.session_not_before,
             case when tu.status = 'active' then
-              filesvc.check_dms_session($3, tu.user_id, a.id, tu.session_not_before, $4)
+              filesvc.check_dms_session($3, tu.user_id, a.id, tu.session_not_before, $4 and not tu.is_admin)
             end as session_valid
      from filesvc.tenant_users tu
      join filesvc.tenants t on t.id = tu.tenant_id and t.status = 'active'
@@ -166,6 +167,31 @@ async function authenticateUserToken(request: Request, token: string): Promise<A
             member?.status === "suspended" ? "account_suspended" : member?.status === "active" ? "session_expired" : "membership_denied",
         );
         return null;
+    }
+    if (member.is_admin) {
+        // Neither a decoded client claim nor a still-unexpired JWT is sufficient:
+        // the live session must retain its verified TOTP factor after IT resets.
+        let mfaValid: boolean;
+        try {
+            const result = await pool.query<{ valid: boolean }>(
+                "select filesvc.check_dms_mfa_session($1, $2, $3) as valid",
+                [sessionId, userId, applicationId],
+            );
+            mfaValid = result.rows[0]?.valid === true;
+        } catch {
+            throw new SecurityError("mfa_verification_unavailable", 503);
+        }
+        if (data?.claims?.aal !== "aal2" || !mfaValid) throw new SecurityError("mfa_required", 403);
+        if (countsAsActivity) {
+            const result = await pool.query<{ valid: boolean }>(
+                "select filesvc.check_dms_session($1, $2, $3, $4, true) as valid",
+                [sessionId, userId, applicationId, member.session_not_before],
+            );
+            if (!result.rows[0]?.valid) {
+                sessionDenials.set(request, "session_expired");
+                return null;
+            }
+        }
     }
     const grants = await pool.query<DepartmentGrant>(
         `select d.id, d.code, d.name,

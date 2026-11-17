@@ -70,6 +70,12 @@ function SetPassword() {
         cache: "no-store",
       });
       if (!response.ok) {
+        const result = await response.json().catch(() => null);
+        if (response.status === 403 && result?.error?.code === "mfa_required") {
+          setPassword("");
+          router.replace("/");
+          return;
+        }
         setMessage(
           "ตั้งรหัสผ่านแล้ว แต่บัญชีนี้ยังเข้าถึงพื้นที่เอกสารนี้ไม่ได้ โปรดติดต่อผู้ดูแล",
         );

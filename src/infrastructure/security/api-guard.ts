@@ -5,7 +5,7 @@ import { authenticateApplicationKey, getUserSessionDenial } from "@/infrastructu
 import { auditRequestContext } from "@/infrastructure/audit/record-audit";
 import { consume, clientAddress, policyFor } from "./rate-limit.mjs";
 import { readBoundedBody, SecurityError } from "./request-body.mjs";
-import { logger } from "./logger.mjs";
+import { logger, securityWarning } from "./logger.mjs";
 
 export function securityRoute<Args extends unknown[]>(handler: (request: Request, ...args: Args) => Promise<Response>) {
     return async (request: Request, ...args: Args): Promise<Response> => {
@@ -72,6 +72,9 @@ export function securityRoute<Args extends unknown[]>(handler: (request: Request
                 if (!(error instanceof SecurityError)) logger.error("api_request_failed", { requestId, code: stage });
                 const status = error instanceof SecurityError ? error.status : 503;
                 const code = error instanceof SecurityError ? error.code : "service_unavailable";
+                if (code === "mfa_required" || code === "mfa_verification_unavailable") {
+                    securityWarning(code, { requestId, status, route: new URL(request.url).pathname });
+                }
                 return Response.json(
                     { error: { code, message: code.replaceAll("_", " "), requestId } },
                     {

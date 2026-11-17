@@ -11,6 +11,10 @@ node_modules
 out
 build
 coverage
+tests
+test-results
+playwright-report
+.mfa-local
 .quota-reports
 .yarn
 .pnp.*

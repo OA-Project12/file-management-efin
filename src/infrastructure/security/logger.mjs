@@ -1,9 +1,11 @@
 // Shared by the API and worker. Never serialize arbitrary errors or request data.
-const sensitive = /password|passwd|authorization|cookie|secret|token|signed.?url|api.?key|database.?url|connection.?string/i;
+const sensitive = /password|passwd|authorization|cookie|secret|token|signed.?url|api.?key|database.?url|connection.?string|otp|qr.?code|recovery.?code/i;
 export function redact(value, depth = 0) {
   if (depth > 8) return '[truncated]';
   if (value instanceof Error) return { name: value.name, code: safeCode(value.code) };
   if (typeof value === 'string') return value
+    .replace(/otpauth:\/\/[^\s"'<>]+/gi, '[redacted]')
+    .replace(/data:image\/[^\s"'<>]+/gi, '[redacted]')
     .replace(/(?:https?|postgres(?:ql)?|rediss?):\/\/[^\s"'<>]+/gi, raw => {
       try { const url = new URL(raw); return `${url.protocol}//${url.host}${url.pathname}`; } catch { return '[url]'; }
     })
@@ -11,7 +13,7 @@ export function redact(value, depth = 0) {
     .replace(/\bfsvc_[a-f\d]{12}\.[\w-]+/gi, '[redacted]')
     .replace(/\beyJ[\w-]+\.[\w-]+\.[\w-]+/g, '[redacted]')
     .replace(/\b(?:sb_secret_|sb_publishable_)[\w-]+/g, '[redacted]')
-    .replace(/\b(password|passwd|token|secret|api[_-]?key)\s*[=:]\s*[^\s,;]+/gi, '$1=[redacted]')
+    .replace(/\b(password|passwd|token|secret|api[_-]?key|otp|totp|qr[_-]?code|recovery[_-]?code)\s*[=:]\s*[^\s,;]+/gi, '$1=[redacted]')
     .replace(/[\r\n\u0000-\u001f\u007f]/g, ' ').slice(0, 1024);
   if (typeof value === 'bigint') return value.toString();
   if (value === null || typeof value === 'number' || typeof value === 'boolean') return value;
@@ -48,7 +50,8 @@ export function validateAuditDetails(details = {}) {
     if (sensitive.test(key) || (typeof value === 'string' &&
       (/\b(?:Bearer\s|fsvc_[a-f\d]{12}\.|eyJ[\w-]+\.[\w-]+\.|sb_secret_)/i.test(value) ||
        /(?:postgres(?:ql)?|rediss?):\/\//i.test(value) || unsafeUrl(value) ||
-       /\b(?:password|token|secret|api[_-]?key)\s*[=:]/i.test(value)))) {
+       /otpauth:\/\/|data:image\//i.test(value) ||
+       /\b(?:password|token|secret|api[_-]?key|otp|totp|qr[_-]?code|recovery[_-]?code)\s*[=:]/i.test(value)))) {
       throw Object.assign(new Error('Unsafe audit detail'), { code: 'UNSAFE_AUDIT_DETAIL' });
     }
     if (value !== null && !['string','number','boolean'].includes(typeof value)) throw new Error('Invalid audit detail');

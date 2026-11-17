@@ -2,6 +2,7 @@
 import { Pool } from "pg";
 import { createClient } from "@supabase/supabase-js";
 import { checkRedisReady, closeRedis, mode } from "../src/infrastructure/security/rate-limit.mjs";
+import { checkTenantAdminMfaSchema } from "../src/infrastructure/security/mfa-preflight.mjs";
 
 const target = process.argv[2];
 if (!["web", "worker"].includes(target)) {
@@ -62,6 +63,7 @@ try {
     `);
         checks.dmsSessionSchema = session.ready;
         if (!session.ready) throw Object.assign(new Error(), { code: "DMS_SESSION_SCHEMA_REQUIRED" });
+        checks.tenantAdminMfaSchema = await checkTenantAdminMfaSchema(pool);
         const { rows: [rotation] } = await pool.query(`
             select case when exists (
                 select 1 from pg_attribute

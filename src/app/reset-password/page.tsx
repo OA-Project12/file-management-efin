@@ -7,8 +7,9 @@ import { Input } from "@/components/ui/input";
 import { Notice } from "@/components/dms/common";
 import { AuthFrame } from "@/components/dms/auth-frame";
 import { createRecoveryAuth, getBrowserAuth } from "@/lib/browser-auth";
+import { MfaChallenge } from "@/components/dms/mfa-challenge";
 
-type Phase = "checking" | "confirm" | "invalid" | "password" | "revoke-error" | "done";
+type Phase = "checking" | "confirm" | "invalid" | "mfa-check" | "mfa" | "password" | "revoke-error" | "done";
 type RecoverySession = { auth: ReturnType<typeof createRecoveryAuth>["auth"]; userId: string };
 
 export default function ResetPasswordPage() {
@@ -20,6 +21,7 @@ export default function ResetPasswordPage() {
     const token = useRef<string | null>(null);
     const captured = useRef(false);
     const recovery = useRef<RecoverySession | null>(null);
+    const [mfaAuth, setMfaAuth] = useState<RecoverySession["auth"] | null>(null);
     const lock = useRef(false);
     const passwordInput = useRef<HTMLInputElement>(null);
     const confirmationInput = useRef<HTMLInputElement>(null);
@@ -58,13 +60,44 @@ export default function ResetPasswordPage() {
                 return;
             }
             recovery.current = { auth, userId: data.user.id };
-            setPhase("password");
+            setPhase("mfa-check");
+            await checkRecoveryMfa(auth);
         } catch {
             setMessage("ยังตรวจสอบลิงก์ไม่ได้ กรุณารอสักครู่แล้วลองอีกครั้ง");
         } finally {
             lock.current = false;
             setBusy(false);
         }
+    }
+
+    async function checkRecoveryMfa(auth: RecoverySession["auth"]) {
+        const { data, error } = await auth.mfa.listFactors();
+        if (error) throw error;
+        if (data.all.some((factor) => factor.status === "verified")) {
+            setMfaAuth(auth);
+            setPhase("mfa");
+        } else setPhase("password");
+    }
+
+    async function retryMfaCheck() {
+        if (!recovery.current || lock.current) return;
+        lock.current = true;
+        setBusy(true);
+        setMessage("");
+        try { await checkRecoveryMfa(recovery.current.auth); }
+        catch { setMessage("ตรวจสอบ MFA ไม่สำเร็จ กรุณาลองใหม่หรือติดต่อ IT"); }
+        finally { lock.current = false; setBusy(false); }
+    }
+
+    async function recoveryMfaVerified() {
+        const auth = recovery.current?.auth;
+        if (!auth) { setPhase("invalid"); return; }
+        const { data, error } = await auth.mfa.getAuthenticatorAssuranceLevel();
+        if (error) throw error;
+        if (data.currentLevel !== "aal2") throw new Error("mfa_required");
+        setMfaAuth(null);
+        setMessage("");
+        setPhase("password");
     }
 
     async function revokeSessions(session: RecoverySession) {
@@ -123,6 +156,11 @@ export default function ResetPasswordPage() {
                     setPassword("");
                     setConfirmation("");
                     setPhase("invalid");
+                } else if (error.code === "insufficient_aal") {
+                    setPassword("");
+                    setConfirmation("");
+                    setMfaAuth(session.auth);
+                    setPhase("mfa");
                 } else if (error.code === "same_password") {
                     setMessage("กรุณาเลือกรหัสผ่านใหม่ที่ต่างจากรหัสผ่านเดิม");
                 } else if (error.code === "weak_password") {
@@ -159,6 +197,12 @@ export default function ResetPasswordPage() {
     return (
         <AuthFrame title="ตั้งรหัสผ่านใหม่">
             {phase === "checking" && <p role="status">กำลังเปิดลิงก์ตั้งรหัสผ่าน…</p>}
+            {phase === "mfa-check" && <>
+                <p role="status">ตรวจสอบ MFA ก่อนตั้งรหัสผ่านใหม่</p>
+                {message && <Notice tone="danger">{message}</Notice>}
+                <Button disabled={busy} onClick={() => void retryMfaCheck()}>ตรวจสอบอีกครั้ง</Button>
+            </>}
+            {phase === "mfa" && mfaAuth && <MfaChallenge auth={mfaAuth} allowEnroll={false} onVerified={recoveryMfaVerified} />}
             {phase === "confirm" && (
                 <>
                     <p className="muted">กดดำเนินการต่อเพื่อยืนยันลิงก์จากอีเมล</p>
