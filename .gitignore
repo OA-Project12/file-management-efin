@@ -53,3 +53,4 @@ db/migrations/
 /.mfa-local/
 /test-results/
 /playwright-report/
+tests/
