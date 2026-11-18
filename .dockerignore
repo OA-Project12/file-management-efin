@@ -37,3 +37,4 @@ certs/*
 # Preserve source image assets, should the UI add them later.
 !public/**/*.png
 !src/**/*.png
+public/pdfjs

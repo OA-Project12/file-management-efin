@@ -15,7 +15,7 @@ import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
 import { DialogShell } from "@/components/ui/dialog-shell";
 import { ScanProgress, scanPending, type ScanReceipt } from "@/components/dms/scan-progress";
-import { SignedPreview } from "@/components/dms/preview";
+import { SignedPreview, type ContentGrant } from "@/components/dms/preview";
 
 type Version = {
   id: string;
@@ -124,13 +124,13 @@ export function useFileVersionsView({
   const [uploadStage, setUploadStage] = useState("");
   const [resumeId, setResumeId] = useState<string | null>(null);
   const [preview, setPreview] = useState<{
-    url: string;
-    type: string;
-    name: string;
-    number: number;
+    grant: ContentGrant & { fileName: string };
+    version: Version;
+    revision: number;
   } | null>(null);
   const [link, setLink] = useState<{ url: string; name: string } | null>(null);
   const mounted = useRef(true);
+  const previewRevision = useRef(0);
   const serial = useRef(0);
   const lock = useRef(false);
   const xhr = useRef<XMLHttpRequest | null>(null);
@@ -254,26 +254,26 @@ export function useFileVersionsView({
     );
     setFeedback(success);
   }
+  function closePreview() {
+    previewRevision.current++;
+    setPreview(null);
+  }
   async function grant(version: Version, kind: "preview" | "download") {
     if (!start(`${kind}:${version.id}`)) return;
+    const revision = kind === "preview" ? ++previewRevision.current : previewRevision.current;
     try {
       const result = (
         (await api(`/files/${fileId}/versions/${version.id}/${kind}-url`, {
           method: "POST",
           body: "{}",
         })) as {
-          data: { signedUrl: string; contentType: string; fileName: string };
+          data: ContentGrant & { fileName: string };
         }
       ).data;
       if (!mounted.current) return;
-      if (kind === "preview")
-        setPreview({
-          url: result.signedUrl,
-          type: result.contentType,
-          name: result.fileName,
-          number: version.versionNumber,
-        });
-      else setLink({ url: result.signedUrl, name: result.fileName });
+      if (kind === "preview") {
+        if (revision === previewRevision.current) setPreview({ grant: result, version, revision });
+      } else setLink({ url: result.signedUrl, name: result.fileName });
     } catch (e) {
       if (mounted.current) setError(message(e));
     } finally {
@@ -451,7 +451,7 @@ export function useFileVersionsView({
       {operation?.startsWith("download:") && (
         <p role="status">กำลังเตรียมลิงก์ดาวน์โหลด…</p>
       )}
-      {error && (
+      {error && !preview && (
         <div className="version-error" role="alert">
           <p>{error}</p>
           <Button
@@ -616,7 +616,7 @@ export function useFileVersionsView({
           </li>
         ))}
       </ol>
-      {link && (
+      {link && !preview && (
         <p className="version-download" role="status">
           ลิงก์พร้อมใช้งาน 5 นาที{" "}
           <a
@@ -685,49 +685,44 @@ export function useFileVersionsView({
       {preview && (
         <DialogShell
           open
-          title={`ดูตัวอย่างเวอร์ชัน ${preview.number}`}
+          title={`ดูตัวอย่างเวอร์ชัน ${preview.version.versionNumber}`}
           dirty={false}
           size="wide"
           onOpenChange={(open) => {
-            if (!open) setPreview(null);
+            if (!open) closePreview();
           }}
         >
           <section className="version-preview-dialog">
             <div>
-              <h2>เวอร์ชัน {preview.number}</h2>
-              <Button variant="outline" onClick={() => setPreview(null)}>
+              <h2>เวอร์ชัน {preview.version.versionNumber}</h2>
+              <Button variant="outline" onClick={closePreview}>
                 ปิดตัวอย่าง
               </Button>
             </div>
-            <p className="version-name">{preview.name}</p>
-            <p>ลิงก์มีอายุ 5 นาที หากหมดอายุให้ปิดแล้วขอดูตัวอย่างใหม่</p>
+            <p className="version-name">{preview.grant.fileName}</p>
+            {error && <p className="version-error" role="alert">{error}</p>}
             <SignedPreview
-              key={preview.url}
-              grant={{
-                signedUrl: preview.url,
-                contentType: preview.type,
-                expiresInSeconds: 300,
-              }}
-              title={preview.name}
-              onRenew={() => {
-                const version = page?.items.find(
-                  (v) => v.versionNumber === preview.number,
-                );
-                if (version) void grant(version, "preview");
-              }}
+              key={preview.revision}
+              grant={preview.grant}
+              title={preview.grant.fileName}
+              busy={busy}
+              onRenew={() => void grant(preview.version, "preview")}
             />
             <Button
               variant="outline"
               disabled={busy}
-              onClick={() => {
-                const version = page?.items.find(
-                  (v) => v.versionNumber === preview.number,
-                );
-                if (version) void grant(version, "download");
-              }}
+              onClick={() => void grant(preview.version, "download")}
             >
               ดาวน์โหลดฉบับนี้
             </Button>
+            {link && (
+              <p className="version-download" role="status">
+                ลิงก์พร้อมใช้งาน 5 นาที{" "}
+                <a href={link.url} target="_blank" rel="noopener noreferrer" referrerPolicy="no-referrer">
+                  ดาวน์โหลด {link.name}
+                </a>
+              </p>
+            )}
           </section>
         </DialogShell>
       )}

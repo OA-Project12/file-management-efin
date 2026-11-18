@@ -19,6 +19,7 @@
 
 # production
 /build
+/public/pdfjs/
 
 # misc
 .DS_Store
@@ -54,3 +55,4 @@ db/migrations/
 /test-results/
 /playwright-report/
 tests/
+.postman/

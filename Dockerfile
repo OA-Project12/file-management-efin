@@ -16,6 +16,7 @@ ARG NEXT_PUBLIC_SUPABASE_PUBLISHABLE_KEY
 COPY next.config.ts tsconfig.json postcss.config.mjs components.json ./
 COPY src ./src
 COPY public ./public
+COPY scripts/prepare-preview-assets.mjs ./scripts/
 RUN test -n "$NEXT_PUBLIC_SUPABASE_URL" && test -n "$NEXT_PUBLIC_SUPABASE_PUBLISHABLE_KEY" \
     && npm run build -- --webpack
 
@@ -30,7 +31,7 @@ ENV NODE_ENV=production \
 COPY --from=production-dependencies --chown=node:node /app/node_modules ./node_modules
 COPY --from=build --chown=node:node /app/.next ./.next
 COPY --chown=node:node package.json package-lock.json next.config.ts ./
-COPY --chown=node:node public ./public
+COPY --from=build --chown=node:node /app/public ./public
 # Railway pre-deploy check and outbox worker dependencies.
 COPY --chown=node:node \
     scripts/check-deployment.mjs \

@@ -3,6 +3,7 @@ import { logger } from "@/infrastructure/security/logger.mjs";
 import "server-only";
 import { validateStoredFile, validationObjectInfo } from "@/application/files/validate-stored-file";
 import { FileValidationError, validateDeclaredType, validationAudit } from "@/domain/files/file-validation";
+import { PREVIEW_URL_TTL_SECONDS, previewMediaType } from "@/domain/files/preview-policy";
 
 import { randomUUID } from "node:crypto";
 import { connection } from "next/server";
@@ -175,8 +176,6 @@ export async function completeVersionUpload(request: Request, context: Context) 
     }
 }
 
-const PREVIEWABLE = new Set(["application/pdf", "image/jpeg", "image/png", "image/gif", "image/webp", "text/plain"]);
-
 async function versionIds(context: Context) {
     const { fileId, versionId } = await context.params;
     if (!UUID.test(fileId)) throw new VersionError("invalid_file_id", 400);
@@ -194,9 +193,9 @@ async function versionUrl(request: Request, context: Context, preview: boolean) 
         if (!info) throw new VersionError("object_not_found", 409);
         if (info.sizeBytes !== Number(v.size_bytes)) throw new VersionError("object_changed", 409);
         const contentType = info.contentType ?? v.content_type;
-        if (preview && !PREVIEWABLE.has(contentType.toLowerCase())) throw new VersionError("preview_not_supported", 415);
+        if (preview && !previewMediaType(contentType)) throw new VersionError("preview_not_supported", 415);
         const grant = preview
-            ? await storage.createPreviewGrant(v.bucket_id, v.object_key, 300)
+            ? await storage.createPreviewGrant(v.bucket_id, v.object_key, PREVIEW_URL_TTL_SECONDS)
             : await storage.createDownloadGrant(v.bucket_id, v.object_key, 300, v.original_name);
         // Fail closed: never return the signed URL unless its audit event was persisted.
         try {

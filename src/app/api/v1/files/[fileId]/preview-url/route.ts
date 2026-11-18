@@ -5,10 +5,9 @@ import { canSeeFile } from "@/application/auth/folder-visibility";
 import { PostgresFileRepository } from "@/infrastructure/database/postgres-file-repository";
 import { SupabaseObjectStorage } from "@/infrastructure/storage/supabase-object-storage";
 import { accessibleDepartmentIds } from "@/application/auth/department-authorization";
+import { PREVIEW_URL_TTL_SECONDS, previewMediaType } from "@/domain/files/preview-policy";
 
 const UUID_PATTERN = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
-const PREVIEW_URL_TTL_SECONDS = 300;
-const PREVIEWABLE_CONTENT_TYPES = new Set(["application/pdf", "image/jpeg", "image/png", "image/gif", "image/webp", "text/plain"]);
 
 function errorResponse(code: string, message: string, status: number): Response {
     return Response.json({ error: { code, message } }, { status, headers: { "Cache-Control": "no-store" } });
@@ -49,7 +48,7 @@ async function handlePOST(request: Request, context: { params: Promise<{ fileId:
             isTenantAdmin: application.isTenantAdmin,
         });
         if (!file) return errorResponse("file_not_found", "File was not found.", 404);
-        if (!PREVIEWABLE_CONTENT_TYPES.has(file.contentType.toLowerCase())) {
+        if (!previewMediaType(file.contentType)) {
             return errorResponse("preview_not_supported", "Preview is not supported for this file type.", 415);
         }
 

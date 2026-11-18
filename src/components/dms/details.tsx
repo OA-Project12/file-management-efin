@@ -264,12 +264,14 @@ export function FileDetails({
                             </p>
                         )}
                         <FilePreview
-                            key={previewRevision}
+                            key={`${current.id}:${previewRevision}`}
                             api={api}
                             path={`/files/${current.id}/preview-url`}
                             title={fileName(current)}
                             autoOpen={autoPreview}
                             onDenied={onPreviewDenied}
+                            onDownload={() => void download()}
+                            downloadBusy={busy || versionBusy}
                         />
                     </div>
                     <div className="reader-inspector">
