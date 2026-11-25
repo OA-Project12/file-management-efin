@@ -6,7 +6,7 @@ import { createClient } from "@supabase/supabase-js";
 import { runObjectCleanup } from "./object-cleanup.mjs";
 import { removeStoredObjectIfPresent } from "./worker-storage.mjs";
 import { enterStorageMutation } from "../src/infrastructure/storage/storage-maintenance.mjs";
-import { runMalwareScanLoop } from "./process-malware-scans.mjs";
+import { readScanConcurrency, runMalwareScanLoop } from "./process-malware-scans.mjs";
 import { scanStorage } from "./scan-storage.mjs";
 
 const require = createRequire(import.meta.url);
@@ -20,6 +20,14 @@ const IDLE_DELAY_MS = 2_000;
 const workerDatabaseUrl = process.env.WORKER_DATABASE_URL;
 const supabaseUrl = process.env.SUPABASE_URL;
 const supabaseSecretKey = process.env.SUPABASE_SECRET_KEY;
+let scanConcurrency;
+
+try {
+    scanConcurrency = readScanConcurrency();
+} catch {
+    logger.error("MALWARE_SCAN_CONCURRENCY must be an integer from 1 to 4.", { code: "scan_concurrency_invalid" });
+    process.exit(1);
+}
 
 if (!workerDatabaseUrl || !supabaseUrl || !supabaseSecretKey) {
     logger.error("WORKER_DATABASE_URL, SUPABASE_URL, and SUPABASE_SECRET_KEY must be configured.");
@@ -28,7 +36,7 @@ if (!workerDatabaseUrl || !supabaseUrl || !supabaseSecretKey) {
 
 const pool = new Pool({
     connectionString: workerDatabaseUrl,
-    max: 2,
+    max: scanConcurrency + 2,
     connectionTimeoutMillis: 5_000,
     idleTimeoutMillis: 30_000,
 });
@@ -163,7 +171,7 @@ async function main() {
     const scanLoop = runMalwareScanLoop(pool, (signal) => scanStorage(createClient(supabaseUrl,supabaseSecretKey,{
         auth:{persistSession:false,autoRefreshToken:false},
         global:{fetch:(input,init)=>fetch(input,{...init,signal:AbortSignal.any([signal,AbortSignal.timeout(60_000),...(init?.signal?[init.signal]:[])])})},
-    }),supabaseUrl,supabaseSecretKey), {signal:stoppingSignal.signal,logger});
+    }),supabaseUrl,supabaseSecretKey), {signal:stoppingSignal.signal,logger,concurrency:scanConcurrency});
     let nextAuditMaintenance = 0;
     let nextObjectCleanup = 0;
     try {

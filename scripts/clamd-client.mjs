@@ -50,9 +50,13 @@ export function interpretScanReply(reply) {
     throw scanError("scanner_invalid_reply");
 }
 
+export async function checkScanner(address, signal) {
+    validateSignatureAge(await exchange(address,"VERSION",signal));
+}
+
 export async function scanStream(address, openBody, expectedBytes, attemptSignal, timeoutMs = 90_000) {
     const signal = AbortSignal.any([attemptSignal, AbortSignal.timeout(timeoutMs)]);
-    validateSignatureAge(await exchange(address,"VERSION",signal));
+    await checkScanner(address,signal);
     let sent = 0;
     const hash = createHash("sha256");
     const reply = await exchange(address,"INSTREAM",signal,async (write) => {
@@ -73,6 +77,6 @@ export async function scanStream(address, openBody, expectedBytes, attemptSignal
         await write(Buffer.alloc(4));
     });
     const verdict = interpretScanReply(reply);
-    if (verdict === "clean") validateSignatureAge(await exchange(address,"VERSION",signal));
+    if (verdict === "clean") await checkScanner(address,signal);
     return { verdict, sha256:hash.digest("hex") };
 }

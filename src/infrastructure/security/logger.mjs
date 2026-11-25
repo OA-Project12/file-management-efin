@@ -22,7 +22,9 @@ export function redact(value, depth = 0) {
     .map(([key, item]) => [key, sensitive.test(key) ? '[redacted]' : redact(item, depth + 1)]));
   return undefined;
 }
-const allowed = new Set(['code','requestId','route','status','durationMs','fileId','versionId','resourceId','actorId','tenantId','applicationId','outboxId','action','target','count','scheduled','processed','deletedEvents','deletedSecurityEvents','droppedPartitions','policy','retryAfter']);
+const allowed = new Set(['code','requestId','route','status','durationMs','fileId','versionId','resourceId','actorId','tenantId',
+  'applicationId','outboxId','action','target','count','scheduled','processed','deletedEvents','deletedSecurityEvents',
+  'droppedPartitions','policy','retryAfter','queueWaitMs','scanMs','persistMs','activeScans','scanConcurrency','retryCount']);
 function safeCode(code) { return typeof code === 'string' && /^[A-Za-z0-9_]{1,80}$/.test(code) ? code : undefined; }
 function emit(level, event, fields = {}) {
   const safe = Object.fromEntries(Object.entries(fields).filter(([key]) => allowed.has(key)));

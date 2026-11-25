@@ -1,9 +1,12 @@
 import { createHash } from "node:crypto";
+import { get as httpGet } from "node:http";
+import { get as httpsGet } from "node:https";
 import { scanError } from "./clamd-client.mjs";
 import { isMissingStorageObject, removeStoredObjectIfPresent } from "./worker-storage.mjs";
 
 export function scanStorage(supabase, origin, secret) {
     const base = new URL(origin);
+    const get = base.protocol === "https:" ? httpsGet : httpGet;
     async function info(bucket, key) {
         const {data,error} = await supabase.storage.from(bucket).info(key);
         if (isMissingStorageObject(error)) return null;
@@ -15,19 +18,27 @@ export function scanStorage(supabase, origin, secret) {
         if (parts.some((part) => !part || part === "." || part === "..")) throw scanError("invalid_scan_object",true);
         const path = parts.map(encodeURIComponent).join("/");
         const url = new URL(`/storage/v1/object/authenticated/${path}`,base.origin);
-        const response = await fetch(url,{signal,redirect:"error",cache:"no-store",headers:{
-            apikey:secret,Authorization:`Bearer ${secret}`,...(expected.eTag?{"If-Match":expected.eTag}:{}),
-        }});
-        const etag = response.headers.get("etag");
-        if (response.status === 412 || (etag && expected.eTag && etag !== expected.eTag)) {
-            await response.body?.cancel();
+        // Use a Node stream for the backpressured transfer to ClamAV (nodejs/undici#5360).
+        const response = await new Promise((resolve, reject) => {
+            const request = get(url, { signal, headers: {
+                apikey: secret, Authorization: `Bearer ${secret}`, "Cache-Control": "no-store",
+                "Accept-Encoding": "identity", ...(expected.eTag ? { "If-Match": expected.eTag } : {}),
+            } }, (message) => {
+                message.on("error", reject);
+                resolve(message);
+            });
+            request.once("error", reject);
+        });
+        const etag = response.headers.etag;
+        if (response.statusCode === 412 || (etag && expected.eTag && etag !== expected.eTag)) {
+            response.destroy();
             throw scanError("object_changed",true);
         }
-        if (response.status !== 200 || !response.body) {
-            await response.body?.cancel();
+        if (response.statusCode !== 200) {
+            response.destroy();
             throw scanError("storage_unavailable");
         }
-        return response.body;
+        return response;
     }
     return {
         info,open,
