@@ -61,11 +61,11 @@ export function ScanProgress({
                     if (signal.aborted) break;
                     if (data.scanId !== scanId || !Object.hasOwn(labels, data.status)) throw new Error("invalid_scan_status");
                     setUnavailable(false);
-                    setSnapshot(data);
                     if (!scanPending(data)) {
                         finish(data);
                         break;
                     }
+                    setSnapshot(data);
                 } catch (error) {
                     if (signal.aborted) break;
                     setUnavailable(true);
@@ -79,7 +79,7 @@ export function ScanProgress({
         void poll();
         return () => controller.abort();
     }, [api, pending, statusUrl, scanId]);
-    const shown = snapshot?.scanId === scanId ? snapshot : receipt;
+    const shown = pending && snapshot?.scanId === scanId ? snapshot : receipt;
     const label =
         shown.status === "scan_failed" && shown.code === "scan_permission_changed"
             ? "สิทธิ์เปลี่ยนระหว่างสแกน · ไฟล์ยังไม่พร้อมใช้"

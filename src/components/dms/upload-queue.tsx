@@ -7,7 +7,7 @@ import type { Api, Department, FileRow, Scope } from "./model";
 import { errorText, fileSize } from "./model";
 import { Notice } from "./common";
 
-import { ScanProgress, type ScanReceipt } from "./scan-progress";
+import { ScanProgress, scanPending, type ScanReceipt } from "./scan-progress";
 
 type Result = {
     file: File;
@@ -36,6 +36,12 @@ const labels: Record<Result["status"], string> = {
     error: "ไม่สำเร็จ",
     unknown: "ยังยืนยันผลไม่ได้ โปรดตรวจรายการก่อนอัปโหลดใหม่",
 };
+
+function scanStatus(scan: ScanReceipt): Result["status"] {
+    if (scan.status === "available") return "completed";
+    return scanPending(scan) ? "pending_scan" : "error";
+}
+
 export function UploadQueue({
     api,
     scope,
@@ -62,16 +68,7 @@ export function UploadQueue({
         lock.current = true;
         setBusy(true);
         const rows: Result[] = retry
-            ? results.map((row) =>
-                  row.retryable
-                      ? {
-                            ...row,
-                            status: "waiting",
-                            retryable: false,
-                            message: undefined,
-                        }
-                      : row,
-              )
+            ? results
             : files.map((file) => {
                   try {
                       browserUploadMime(file);
@@ -80,11 +77,16 @@ export function UploadQueue({
                       return { file, status: "error", message: errorText(error), retryable: false };
                   }
               });
-        const indexes = rows.map((row, index) => (row.status === "waiting" ? index : -1)).filter((index) => index >= 0);
-        setResults([...rows]);
+        const indexes = rows.flatMap((row, index) => (retry ? row.retryable : row.status === "waiting") ? [index] : []);
+        if (retry) {
+            setResults((current) => current.map((row) => row.retryable
+                ? { ...row, status: "waiting", retryable: false, message: undefined }
+                : row));
+        } else {
+            setResults(rows);
+        }
         const update = (index: number, change: Partial<Result>) => {
-            rows[index] = { ...rows[index], ...change };
-            setResults([...rows]);
+            setResults((current) => current.map((row, position) => position === index ? { ...row, ...change } : row));
         };
         try {
             for (let start = 0; start < indexes.length; start += 20) {
@@ -151,15 +153,10 @@ export function UploadQueue({
                                     sizeBytes: String(completed.data.sizeBytes ?? file.size),
                                 });
                                 if (completed.data.scanId) {
-                                    const status =
-                                        completed.data.status === "available"
-                                            ? "completed"
-                                            : ["pending_scan", "scanning"].includes(completed.data.status)
-                                              ? "pending_scan"
-                                              : "error";
-                                    update(index, { status, scan: completed.data });
+                                    update(index, { status: scanStatus(completed.data), scan: completed.data });
                                     return;
                                 }
+                                if (completed.data.status !== "available") throw new Error("invalid_scan_status");
                                 if (scope.folderId) {
                                     try {
                                         await api(`/files/${intent.fileId}/metadata`, {
@@ -259,16 +256,17 @@ export function UploadQueue({
                                             {row.status === "completed" && <CheckCircle2 aria-hidden="true" />}
                                             {row.scan ? (
                                                 <ScanProgress
+                                                    key={row.scan.scanId}
                                                     api={api}
                                                     receipt={row.scan}
                                                     onResult={(scan) => {
                                                         setResults((previous) =>
                                                             previous.map((item) =>
-                                                                item.scan?.scanId === scan.scanId
+                                                                scanPending(item.scan) && item.scan?.scanId === scan.scanId
                                                                     ? {
                                                                           ...item,
                                                                           scan,
-                                                                          status: scan.status === "available" ? "completed" : "error",
+                                                                          status: scanStatus(scan),
                                                                       }
                                                                     : item,
                                                             ),
@@ -281,14 +279,15 @@ export function UploadQueue({
                                             )}
                                         </p>
                                         {row.message && <p>{row.message}</p>}
-                                        {row.status === "completed" && (
+                                        {row.status === "completed" && row.fileId && (
                                             <button
                                                 className="secondary"
                                                 disabled={busy}
                                                 onClick={() => {
+                                                    if (!row.fileId) return;
                                                     onClose();
                                                     onFile({
-                                                        id: row.fileId!,
+                                                        id: row.fileId,
                                                         departmentId: scope.departmentId,
                                                         folderId: scope.folderId || null,
                                                         originalName: row.file.name,
